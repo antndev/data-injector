@@ -10,3 +10,4 @@ db/
 dist/
 build/
 *.egg-info/
+*.iml
