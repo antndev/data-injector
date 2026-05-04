@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50
     worker_concurrency: int = 4
 
+    openwebui_user_id: str
+
     class Config:
         env_file = ".env"
 
