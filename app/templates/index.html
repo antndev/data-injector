@@ -17,11 +17,17 @@ html,body{height:100%}
 body{background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;display:flex;overflow:hidden}
 
 /* sidebar */
-aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
-.brand{padding:18px 20px;font-size:13px;font-weight:600;color:var(--mute);letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}
-.brand .out{color:var(--dim);font-size:11px;cursor:pointer;background:none;border:0;padding:4px;border-radius:4px}
-.brand .out:hover{color:var(--text);background:var(--hover)}
-.nav{display:flex;flex-direction:column;flex-shrink:0}
+aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;position:relative}
+.logout-btn{
+  position:absolute;top:14px;right:14px;z-index:2;
+  width:30px;height:30px;border-radius:50%;
+  background:transparent;border:1px solid transparent;color:var(--dim);
+  cursor:pointer;display:grid;place-items:center;
+  transition:all .15s;
+}
+.logout-btn:hover{background:var(--hover);color:var(--text);border-color:var(--line)}
+.logout-btn svg{width:14px;height:14px}
+.nav{display:flex;flex-direction:column;flex-shrink:0;padding-top:16px}
 .nav button{
   background:none;border:0;color:var(--text);font:inherit;cursor:pointer;
   padding:9px 20px;text-align:left;display:flex;align-items:center;gap:10px;
@@ -79,6 +85,23 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 /* main */
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
+
+/* live rate strip */
+.rates{display:flex;gap:24px;padding:10px 24px;border-bottom:1px solid var(--line);background:#161616;align-items:center}
+.rate{display:flex;align-items:baseline;gap:6px}
+.rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);min-width:34px}
+.rate .u{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.rate .l{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em;margin-left:4px}
+.rate .arrow{font-size:14px;margin-right:2px}
+.rate.in .arrow{color:var(--blue)}
+.rate.out .arrow{color:var(--green)}
+.rate.act .v{color:var(--yellow)}
+.rate.tput{margin-left:auto;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+.rate.tput b{color:var(--mute);font-weight:500}
+.spark{display:flex;align-items:flex-end;gap:1px;height:18px;margin-left:6px}
+.spark span{width:3px;background:var(--line);border-radius:1px;transition:height .3s}
+.rate.in .spark span.hot{background:var(--blue)}
+.rate.out .spark span.hot{background:var(--green)}
 .search{flex:1;max-width:480px;position:relative}
 .search input{
   width:100%;background:var(--panel);border:1px solid transparent;border-radius:20px;
@@ -141,12 +164,11 @@ tr:hover .actions .btn.s,tr.sel .actions .btn.s{opacity:1}
 <body>
 
 <aside>
-  <div class="brand">
-    <span>data ingestor</span>
-    <form method="post" action="/logout" style="margin:0">
-      <button class="out" title="Sign out" type="submit">↪ logout</button>
-    </form>
-  </div>
+  <form method="post" action="/logout" style="margin:0">
+    <button class="logout-btn" title="Sign out" type="submit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+    </button>
+  </form>
   <div class="nav" id="nav">
     <button data-f="" class="on"><span class="dot all"></span>All<span class="count" id="c-total">0</span></button>
     <button data-f="queued"><span class="dot queued"></span>Queued<span class="count" id="c-queued">0</span></button>
@@ -179,6 +201,28 @@ tr:hover .actions .btn.s,tr.sel .actions .btn.s{opacity:1}
       <button class="btn" id="b-clear">Clear</button>
     </div>
   </header>
+
+  <div class="rates">
+    <div class="rate in">
+      <span class="arrow">↓</span>
+      <span class="v" id="r-in">0.0</span><span class="u">/s</span>
+      <span class="l">ingest</span>
+      <span class="spark" id="spark-in"></span>
+    </div>
+    <div class="rate out">
+      <span class="arrow">↑</span>
+      <span class="v" id="r-out">0.0</span><span class="u">/s</span>
+      <span class="l">complete</span>
+      <span class="spark" id="spark-out"></span>
+    </div>
+    <div class="rate act">
+      <span class="v" id="r-act">0</span>
+      <span class="l">active</span>
+    </div>
+    <div class="rate tput">
+      last min · <b id="r-min-in">0</b> in · <b id="r-min-out">0</b> done
+    </div>
+  </div>
 
   <div class="scroll">
     <table>
@@ -293,6 +337,60 @@ $('q').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{S=e.target.value;load()},25
 
 load(); setInterval(load,2500);
 
+// ── live rates from event stream ──
+const inEvents=[], outEvents=[];
+const SPARK_BUCKETS=20, SPARK_WINDOW_MS=60_000;
+
+function buildSpark(id){
+  const el=$(id);
+  for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}
+}
+buildSpark('spark-in'); buildSpark('spark-out');
+
+function trackEvent(msg){
+  const now=Date.now();
+  if(/^Queued:/.test(msg)) inEvents.push(now);
+  else if(/^Done:/.test(msg)) outEvents.push(now);
+  // failed counts as completion too
+  else if(/^Failed:/.test(msg)) outEvents.push(now);
+}
+
+function trim(arr){
+  const cutoff=Date.now()-SPARK_WINDOW_MS;
+  while(arr.length && arr[0]<cutoff) arr.shift();
+}
+
+function paintSpark(id,arr){
+  trim(arr);
+  const el=$(id), now=Date.now();
+  const bucketSize=SPARK_WINDOW_MS/SPARK_BUCKETS;
+  const counts=new Array(SPARK_BUCKETS).fill(0);
+  arr.forEach(t=>{
+    const idx=Math.min(SPARK_BUCKETS-1, Math.floor((t-(now-SPARK_WINDOW_MS))/bucketSize));
+    counts[idx]++;
+  });
+  const max=Math.max(2,...counts);
+  el.querySelectorAll('span').forEach((s,i)=>{
+    const h=Math.max(2, Math.round((counts[i]/max)*16));
+    s.style.height=h+'px';
+    s.classList.toggle('hot', counts[i]>0);
+  });
+}
+
+function updateRates(){
+  trim(inEvents); trim(outEvents);
+  const inRate=(inEvents.length/(SPARK_WINDOW_MS/1000)).toFixed(1);
+  const outRate=(outEvents.length/(SPARK_WINDOW_MS/1000)).toFixed(1);
+  $('r-in').textContent=inRate;
+  $('r-out').textContent=outRate;
+  $('r-min-in').textContent=inEvents.length;
+  $('r-min-out').textContent=outEvents.length;
+  $('r-act').textContent=$('c-processing').textContent;
+  paintSpark('spark-in', inEvents);
+  paintSpark('spark-out', outEvents);
+}
+setInterval(updateRates, 1000);
+
 // ── live event log via SSE ──
 const logBody=$('log-body'), logHead=$('log-head');
 const MAX_LINES=300;
@@ -303,6 +401,7 @@ function fmtTime(iso){
   return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 }
 function appendLog(evt){
+  trackEvent(evt.msg||'');
   const atBottom=logBody.scrollHeight-logBody.scrollTop-logBody.clientHeight<20;
   const line=document.createElement('div');
   line.className='log-line '+(evt.lvl||'INFO');

@@ -2,30 +2,150 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Sign in</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<title>Sign in · data ingestor</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0f0f0f;color:#f1f1f1;font:14px/1.5 Inter,system-ui,sans-serif;min-height:100vh;display:grid;place-items:center}
-.card{background:#1f1f1f;border:1px solid #303030;border-radius:12px;padding:32px 28px;width:320px}
-h1{font-size:16px;font-weight:600;margin-bottom:6px}
-.sub{color:#aaa;font-size:13px;margin-bottom:24px}
-input{width:100%;background:#0f0f0f;border:1px solid #303030;border-radius:6px;padding:11px 14px;color:#f1f1f1;font:inherit;letter-spacing:.5em;text-align:center;font-size:18px}
-input:focus{outline:0;border-color:#3ea6ff}
-button{width:100%;margin-top:14px;background:#3ea6ff;border:0;color:#000;padding:11px;border-radius:6px;font:500 14px Inter,sans-serif;cursor:pointer}
-button:hover{background:#5fb6ff}
-.err{color:#f28b82;font-size:13px;margin-top:14px;text-align:center}
-.brand{color:#717171;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:18px;text-align:center}
+:root{
+  --bg:#0a0a0a; --panel:#161616; --line:#262626;
+  --text:#f1f1f1; --mute:#aaa; --dim:#666;
+  --blue:#3ea6ff; --red:#f28b82;
+}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font:14px/1.5 Inter,system-ui,sans-serif;
+  display:grid;place-items:center;
+  position:relative;overflow:hidden;
+}
+/* subtle background grid */
+body::before{
+  content:'';position:absolute;inset:0;
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(62,166,255,.08), transparent 60%),
+    linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
+  background-size:auto, 32px 32px, 32px 32px;
+  pointer-events:none;
+}
+
+.card{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:36px 32px 28px;
+  width:340px;
+  position:relative;
+  box-shadow:0 24px 60px -12px rgba(0,0,0,.5), 0 0 0 1px rgba(62,166,255,.04);
+  animation:rise .4s cubic-bezier(.2,.9,.3,1.1);
+}
+.card.shake{animation:shake .4s ease-in-out}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}}
+@keyframes shake{
+  10%,90%{transform:translateX(-2px)}
+  20%,80%{transform:translateX(4px)}
+  30%,50%,70%{transform:translateX(-6px)}
+  40%,60%{transform:translateX(6px)}
+}
+
+.icon{
+  width:44px;height:44px;border-radius:11px;
+  background:linear-gradient(135deg,#1d2a3d,#0f1722);
+  border:1px solid var(--line);
+  display:grid;place-items:center;
+  margin:0 auto 18px;color:var(--blue);
+}
+.icon svg{width:22px;height:22px}
+
+h1{font-size:18px;font-weight:600;text-align:center;letter-spacing:-.01em}
+.sub{color:var(--mute);font-size:13px;text-align:center;margin-top:4px;margin-bottom:24px}
+
+.field{position:relative}
+.field input{
+  width:100%;
+  background:#0a0a0a;
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:14px 16px;
+  color:var(--text);
+  font:500 18px/1 Inter,sans-serif;
+  letter-spacing:.45em;
+  text-align:center;
+  transition:border-color .15s, background .15s;
+}
+.field input::placeholder{letter-spacing:.05em;font-weight:400;color:var(--dim)}
+.field input:focus{outline:0;border-color:var(--blue);background:#0e0e0e}
+.field input:focus + .glow{opacity:1}
+.glow{
+  position:absolute;inset:-1px;border-radius:9px;
+  box-shadow:0 0 0 3px rgba(62,166,255,.12);
+  pointer-events:none;opacity:0;transition:opacity .2s;
+}
+
+button[type=submit]{
+  width:100%;margin-top:14px;
+  background:var(--blue);
+  border:0;color:#000;
+  padding:13px;border-radius:8px;
+  font:600 14px Inter,sans-serif;
+  cursor:pointer;
+  transition:transform .1s, background .15s;
+}
+button[type=submit]:hover{background:#5fb6ff}
+button[type=submit]:active{transform:translateY(1px)}
+
+.err{
+  margin-top:14px;
+  background:rgba(242,139,130,.08);
+  border:1px solid rgba(242,139,130,.2);
+  color:var(--red);
+  padding:9px 12px;border-radius:7px;
+  font-size:13px;text-align:center;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.err svg{width:14px;height:14px;flex-shrink:0}
+
+.foot{
+  margin-top:22px;padding-top:18px;
+  border-top:1px solid var(--line);
+  text-align:center;color:var(--dim);
+  font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+}
+.foot .dot{
+  display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:#2ba640;margin-right:6px;vertical-align:middle;
+  animation:pulse 1.5s infinite;
+}
+@keyframes pulse{50%{opacity:.3}}
 </style>
 </head>
 <body>
-<form class="card" method="post" action="/login">
-  <div class="brand">data ingestor</div>
-  <h1>Enter PIN</h1>
-  <div class="sub">Authentication required.</div>
-  <input type="password" name="pin" inputmode="numeric" autocomplete="off" autofocus maxlength="32">
+<form class="card{% if error %} shake{% endif %}" method="post" action="/login" autocomplete="off">
+  <div class="icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2"/>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>
+  </div>
+  <h1>Authentication</h1>
+  <div class="sub">Enter your access PIN to continue</div>
+
+  <div class="field">
+    <input type="password" name="pin" inputmode="numeric"
+           autocomplete="off" autofocus maxlength="32" placeholder="• • • •">
+    <span class="glow"></span>
+  </div>
+
   <button type="submit">Sign in</button>
-  {% if error %}<div class="err">Invalid PIN</div>{% endif %}
+
+  {% if error %}
+  <div class="err">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    Invalid PIN. Try again.
+  </div>
+  {% endif %}
+
+  <div class="foot"><span class="dot"></span>data ingestor</div>
 </form>
 </body>
 </html>
