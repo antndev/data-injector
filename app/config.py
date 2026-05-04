@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
     qdrant_api_key: str | None = None
-    qdrant_collection: str = "documents"
+    qdrant_collection: str = "open-webui_knowledge"
+    qdrant_knowledge_base_id: str = ""
     embedding_dimensions: int = 768
 
     ollama_host: str = "http://ollama:11434"

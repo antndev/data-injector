@@ -287,11 +287,15 @@ async def _embed_and_upload(file_id: str, filename: str, chunks: list[str]):
                     id=str(uuid.uuid4()),
                     vector=embedding,
                     payload={
-                        "source_file": filename,
-                        "file_id": file_id,
-                        "chunk_index": i + j,
                         "text": batch[j],
-                        "ingested_at": now,
+                        "metadata": {
+                            "knowledge_base_id": settings.qdrant_knowledge_base_id,
+                            "source_file": filename,
+                            "file_id": file_id,
+                            "chunk_index": i + j,
+                            "ingested_at": now,
+                        },
+                        "tenant_id": "knowledge-bases",
                     },
                 )
             )
@@ -310,7 +314,7 @@ async def _qdrant_delete(qdrant: AsyncQdrantClient, filename: str):
         await qdrant.delete(
             collection_name=settings.qdrant_collection,
             points_selector=Filter(
-                must=[FieldCondition(key="source_file", match=MatchValue(value=filename))]
+                must=[FieldCondition(key="metadata.source_file", match=MatchValue(value=filename))]
             ),
         )
     except Exception:
@@ -344,6 +348,7 @@ def _qdrant_client() -> AsyncQdrantClient:
         host=settings.qdrant_host,
         port=settings.qdrant_port,
         api_key=settings.qdrant_api_key,
+        https=False,
     )
 
 
