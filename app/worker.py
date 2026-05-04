@@ -43,7 +43,7 @@ async def recover_crashed():
     qdrant = _qdrant_client()
 
     for row in rows:
-        await _qdrant_delete(qdrant, row["filename"])
+        await _qdrant_delete(qdrant, row["id"], row["filename"])
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status = 'queued', error_message = NULL WHERE id = ?",
@@ -310,7 +310,7 @@ async def _embed_and_upload(file_id: str, filename: str, chunks: list[str]):
     await qdrant.close()
 
 
-async def _qdrant_delete(qdrant: AsyncQdrantClient, filename: str):
+async def _qdrant_delete(qdrant: AsyncQdrantClient, file_id: str, filename: str):
     try:
         await qdrant.delete(
             collection_name=settings.qdrant_collection,
@@ -318,9 +318,9 @@ async def _qdrant_delete(qdrant: AsyncQdrantClient, filename: str):
                 must=[FieldCondition(key="metadata.source_file", match=MatchValue(value=filename))]
             ),
         )
+        await _unregister_openwebui_file(file_id)
     except Exception:
-        pass  # collection may not exist yet
-
+        pass
 
 async def _ensure_qdrant_collection():
     qdrant = _qdrant_client()
@@ -380,6 +380,17 @@ def _original_name(converted_name: str, converted_ext: str) -> str:
 
 async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, size: int):
     now = int(datetime.now(timezone.utc).timestamp())
+
+    meta = (
+            '{"name":"%s","content_type":"text/plain","size":%d}'
+            % (filename, size)
+    )
+
+    data = (
+            '{"collection_name":"%s","content":"","metadata":{"name":"%s"}}'
+            % (settings.qdrant_knowledge_base_id, filename)
+    )
+
     async with aiosqlite.connect("/openwebui-data/webui.db") as db:
         await db.execute(
             """INSERT OR REPLACE INTO file
@@ -389,14 +400,15 @@ async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, 
                 file_id,
                 settings.openwebui_user_id,
                 filename,
-                "{}",
+                meta,
                 now,
                 file_hash,
-                '{"collection_name":"%s"}' % settings.qdrant_knowledge_base_id,
+                data,
                 now,
                 "",
             ),
         )
+
         await db.execute(
             """INSERT OR REPLACE INTO knowledge_file
                (id, user_id, knowledge_id, file_id, created_at, updated_at)
@@ -409,5 +421,18 @@ async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, 
                 now,
                 now,
             ),
+        )
+
+        await db.commit()
+
+async def _unregister_openwebui_file(file_id: str):
+    async with aiosqlite.connect("/openwebui-data/webui.db") as db:
+        await db.execute(
+            "DELETE FROM knowledge_file WHERE file_id = ?",
+            (file_id,),
+        )
+        await db.execute(
+            "DELETE FROM file WHERE id = ?",
+            (file_id,),
         )
         await db.commit()
