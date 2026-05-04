@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>data-ingestor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
+    --text: #e2e8f0; --muted: #718096;
+    --green: #48bb78; --yellow: #ecc94b; --red: #fc8181;
+    --blue: #63b3ed; --purple: #b794f4; --orange: #f6ad55;
+  }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  #refresh-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-left: auto; }
+  #refresh-dot.inactive { background: var(--muted); }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; padding: 20px 24px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+
+  .toolbar { padding: 0 24px 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .filter-btn { padding: 5px 14px; border-radius: 20px; border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; font-size: 13px; transition: all .15s; }
+  .filter-btn.active, .filter-btn:hover { background: var(--surface); color: var(--text); border-color: var(--blue); }
+  #search { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); font-size: 13px; width: 220px; margin-left: auto; }
+  #search::placeholder { color: var(--muted); }
+
+  .table-wrap { overflow-x: auto; padding: 0 24px 32px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: var(--surface); }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+  .badge.done        { background: #1a3a2a; color: var(--green); }
+  .badge.processing  { background: #2a2a1a; color: var(--yellow); }
+  .badge.queued      { background: #1a2a3a; color: var(--blue); }
+  .badge.failed      { background: #3a1a1a; color: var(--red); }
+  .badge.deleted     { background: #2a2a2a; color: var(--muted); }
+  .badge.duplicate   { background: #2a1a3a; color: var(--purple); }
+  .badge.unsupported { background: #3a2a1a; color: var(--orange); }
+
+  .btn { padding: 4px 12px; border-radius: 5px; border: 1px solid var(--border); background: transparent;
+    color: var(--muted); cursor: pointer; font-size: 12px; transition: all .15s; }
+  .btn:hover { color: var(--text); border-color: var(--text); }
+  .btn.danger:hover { color: var(--red); border-color: var(--red); }
+  .btn.retry:hover { color: var(--green); border-color: var(--green); }
+
+  #empty { text-align: center; color: var(--muted); padding: 48px; display: none; }
+  .filename { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spin { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>data-ingestor</h1>
+  <span id="refresh-dot" title="Live"></span>
+</header>
+
+<div class="stats">
+  <div class="stat-card"><div class="label">Total</div><div class="value" id="s-total">—</div></div>
+  <div class="stat-card"><div class="label">Queued</div><div class="value" id="s-queued" style="color:var(--blue)">—</div></div>
+  <div class="stat-card"><div class="label">Processing</div><div class="value" id="s-processing" style="color:var(--yellow)">—</div></div>
+  <div class="stat-card"><div class="label">Done</div><div class="value" id="s-done" style="color:var(--green)">—</div></div>
+  <div class="stat-card"><div class="label">Failed</div><div class="value" id="s-failed" style="color:var(--red)">—</div></div>
+  <div class="stat-card"><div class="label">Duplicates</div><div class="value" id="s-duplicates" style="color:var(--purple)">—</div></div>
+</div>
+
+<div class="toolbar">
+  <button class="filter-btn active" data-filter="">All</button>
+  <button class="filter-btn" data-filter="queued">Queued</button>
+  <button class="filter-btn" data-filter="processing">Processing</button>
+  <button class="filter-btn" data-filter="done">Done</button>
+  <button class="filter-btn" data-filter="failed">Failed</button>
+  <button class="filter-btn" data-filter="duplicate">Duplicates</button>
+  <button class="filter-btn" data-filter="unsupported">Unsupported</button>
+  <input id="search" type="text" placeholder="Search filename…">
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Filename</th>
+        <th>Status</th>
+        <th>Chunks</th>
+        <th>Size</th>
+        <th>Date</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="file-tbody"></tbody>
+  </table>
+  <div id="empty">No files found.</div>
+</div>
+
+<script>
+  let activeFilter = '';
+  let searchTerm = '';
+
+  function fmt_size(b) {
+    if (!b) return '—';
+    if (b < 1024) return b + ' B';
+    if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+    return (b/1024/1024).toFixed(1) + ' MB';
+  }
+  function fmt_date(s) {
+    if (!s) return '—';
+    return new Date(s).toLocaleString();
+  }
+  function badge(status) {
+    return `<span class="badge ${status}">${status}</span>`;
+  }
+  function actions(file) {
+    const btns = [];
+    if (file.status === 'done' || file.status === 'processing') {
+      btns.push(`<button class="btn danger" onclick="deleteFile('${file.id}', false)">Delete from KB</button>`);
+    }
+    if (file.status === 'failed') {
+      btns.push(`<button class="btn retry" onclick="retryFile('${file.id}')">Retry</button>`);
+      btns.push(`<button class="btn danger" onclick="deleteFile('${file.id}', true)">Remove</button>`);
+    }
+    return btns.join(' ');
+  }
+
+  async function loadStatus() {
+    const r = await fetch('/status');
+    const d = await r.json();
+    document.getElementById('s-total').textContent = d.total;
+    document.getElementById('s-queued').textContent = d.queued;
+    document.getElementById('s-processing').textContent = d.processing;
+    document.getElementById('s-done').textContent = d.done;
+    document.getElementById('s-failed').textContent = d.failed;
+    document.getElementById('s-duplicates').textContent = d.duplicates;
+  }
+
+  async function loadFiles() {
+    let url = '/files?';
+    if (activeFilter) url += `status=${activeFilter}&`;
+    if (searchTerm) url += `search=${encodeURIComponent(searchTerm)}&`;
+    const r = await fetch(url);
+    const files = await r.json();
+    const tbody = document.getElementById('file-tbody');
+    const empty = document.getElementById('empty');
+    if (!files.length) {
+      tbody.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    tbody.innerHTML = files.map(f => `
+      <tr>
+        <td><div class="filename" title="${f.filename}">${f.filename}</div></td>
+        <td>${badge(f.status)}</td>
+        <td>${f.qdrant_chunk_count ?? '—'}</td>
+        <td>${fmt_size(f.file_size_bytes)}</td>
+        <td>${fmt_date(f.ingested_at || f.created_at)}</td>
+        <td>${actions(f)}</td>
+      </tr>`).join('');
+  }
+
+  async function deleteFile(id, physical) {
+    if (!confirm('Remove from knowledge base?')) return;
+    await fetch(`/files/${id}?delete_physical=${physical}`, { method: 'DELETE' });
+    refresh();
+  }
+
+  async function retryFile(id) {
+    await fetch(`/files/${id}/retry`, { method: 'POST' });
+    refresh();
+  }
+
+  async function refresh() {
+    await Promise.all([loadStatus(), loadFiles()]);
+  }
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeFilter = btn.dataset.filter;
+      loadFiles();
+    });
+  });
+
+  let searchTimer;
+  document.getElementById('search').addEventListener('input', e => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { searchTerm = e.target.value; loadFiles(); }, 300);
+  });
+
+  refresh();
+  setInterval(refresh, 4000);
+</script>
+</body>
+</html>

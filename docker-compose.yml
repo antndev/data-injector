@@ -1,0 +1,22 @@
+services:
+  ingestor:
+    image: ghcr.io/antndev/data-injector:latest
+    container_name: ingestor
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/data
+      - ./db:/db
+    networks:
+      - proxy
+      - rag-internal
+
+networks:
+  proxy:
+    external: true
+  rag-internal:
+    external: true
