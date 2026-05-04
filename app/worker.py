@@ -295,7 +295,7 @@ async def _embed_and_upload(file_id: str, filename: str, chunks: list[str]):
                             "chunk_index": i + j,
                             "ingested_at": now,
                         },
-                        "tenant_id": "knowledge-bases",
+                        "tenant_id": settings.qdrant_knowledge_base_id,
                     },
                 )
             )
