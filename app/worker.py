@@ -195,6 +195,7 @@ async def _process_file(path: Path, file_id: str | None = None):
 
         # 9. Embed + upload
         await _embed_and_upload(file_id, path.name, chunks)
+        await _register_openwebui_file(file_id, path.name, file_hash, path.stat().st_size)
 
         # 10. Done
         done_path = settings.done_dir / path.name
@@ -376,3 +377,37 @@ def _original_name(converted_name: str, converted_ext: str) -> str:
     if converted_ext == ".pptx":
         return stem + ".ppt"
     return converted_name
+
+async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, size: int):
+    now = int(datetime.now(timezone.utc).timestamp())
+    async with aiosqlite.connect("/openwebui-data/webui.db") as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO file
+               (id, user_id, filename, meta, created_at, hash, data, updated_at, path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                file_id,
+                settings.openwebui_user_id,
+                filename,
+                "{}",
+                now,
+                file_hash,
+                '{"collection_name":"%s"}' % settings.qdrant_knowledge_base_id,
+                now,
+                "",
+            ),
+        )
+        await db.execute(
+            """INSERT OR REPLACE INTO knowledge_file
+               (id, user_id, knowledge_id, file_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                str(uuid.uuid4()),
+                settings.openwebui_user_id,
+                settings.qdrant_knowledge_base_id,
+                file_id,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
