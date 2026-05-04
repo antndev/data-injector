@@ -15,6 +15,7 @@ SUPPORTED = {
     ".html", ".xml",
     ".msg",
 }
+IGNORED = {".strings", ".nib", ".icns", ".plist", ".gitignore", ""}
 
 
 class InboxHandler(FileSystemEventHandler):
@@ -22,28 +23,23 @@ class InboxHandler(FileSystemEventHandler):
         self._queue = queue
         self._loop = loop
 
-    def on_closed(self, event):
+    def _wake(self, event):
         if event.is_directory:
             return
-        path = Path(event.src_path)
-        if path.suffix.lower() in SUPPORTED or path.suffix.lower() not in {
-            ".strings", ".nib", ".icns", ".plist", ".gitignore",
-        }:
-            logger.info("Detected: %s", path.name)
-            self._loop.call_soon_threadsafe(self._queue.put_nowait, path)
+        ext = Path(event.src_path).suffix.lower()
+        if ext in IGNORED:
+            return
+        # Worker re-scans the inbox on any signal — sending None is enough
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
 
-    # fallback for systems without IN_CLOSE_WRITE (e.g. Windows dev)
-    def on_created(self, event):
-        if event.is_directory:
-            return
-        path = Path(event.src_path)
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, path)
+    on_closed = _wake
+    on_created = _wake
+    on_moved = _wake
 
 
 def start_watcher(inbox: Path, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop) -> Observer:
-    handler = InboxHandler(queue, loop)
     observer = Observer()
-    observer.schedule(handler, str(inbox), recursive=False)
+    observer.schedule(InboxHandler(queue, loop), str(inbox), recursive=False)
     observer.start()
     logger.info("Watching %s", inbox)
     return observer

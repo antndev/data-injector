@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     openwebui_user_id: str
 
+    admin_pin: str = "1234"
+
     class Config:
         env_file = ".env"
 

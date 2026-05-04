@@ -1,205 +1,326 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>data-ingestor</title>
+<title>ingestor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3a;
-    --text: #e2e8f0; --muted: #718096;
-    --green: #48bb78; --yellow: #ecc94b; --red: #fc8181;
-    --blue: #63b3ed; --purple: #b794f4; --orange: #f6ad55;
-  }
-  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; }
-  header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 18px; font-weight: 600; }
-  #refresh-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-left: auto; }
-  #refresh-dot.inactive { background: var(--muted); }
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0f0f0f; --panel:#1f1f1f; --hover:#272727; --line:#303030;
+  --text:#f1f1f1; --mute:#aaa; --dim:#717171;
+  --blue:#3ea6ff; --green:#2ba640; --yellow:#ffd60a; --red:#f28b82; --purple:#c58af9;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;display:flex;overflow:hidden}
 
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; padding: 20px 24px; }
-  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
-  .stat-card .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
-  .stat-card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+/* sidebar */
+aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{padding:18px 20px;font-size:13px;font-weight:600;color:var(--mute);letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between}
+.brand .out{color:var(--dim);font-size:11px;cursor:pointer;background:none;border:0;padding:4px;border-radius:4px}
+.brand .out:hover{color:var(--text);background:var(--hover)}
+.nav{display:flex;flex-direction:column;flex-shrink:0}
+.nav button{
+  background:none;border:0;color:var(--text);font:inherit;cursor:pointer;
+  padding:9px 20px;text-align:left;display:flex;align-items:center;gap:10px;
+  border-left:3px solid transparent;
+}
+.nav button:hover{background:var(--hover)}
+.nav button.on{background:var(--hover);border-left-color:var(--blue);font-weight:500}
+.nav .count{margin-left:auto;font-size:12px;color:var(--mute);background:var(--panel);padding:1px 8px;border-radius:10px;min-width:24px;text-align:center}
+.nav .dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.nav .dot.queued{background:var(--blue)}
+.nav .dot.processing{background:var(--yellow)}
+.nav .dot.done{background:var(--green)}
+.nav .dot.failed{background:var(--red)}
+.nav .dot.duplicate{background:var(--purple)}
+.nav .dot.unsupported{background:var(--dim)}
+.nav .dot.all{background:var(--text)}
 
-  .toolbar { padding: 0 24px 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-  .filter-btn { padding: 5px 14px; border-radius: 20px; border: 1px solid var(--border); background: transparent;
-    color: var(--muted); cursor: pointer; font-size: 13px; transition: all .15s; }
-  .filter-btn.active, .filter-btn:hover { background: var(--surface); color: var(--text); border-color: var(--blue); }
-  #search { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface);
-    color: var(--text); font-size: 13px; width: 220px; margin-left: auto; }
-  #search::placeholder { color: var(--muted); }
+.spacer{flex:1;min-height:8px}
 
-  .table-wrap { overflow-x: auto; padding: 0 24px 32px; }
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em;
-    padding: 8px 12px; border-bottom: 1px solid var(--border); }
-  td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  tr:hover td { background: var(--surface); }
+/* live log */
+.log{
+  display:flex;flex-direction:column;min-height:0;
+  border-top:1px solid var(--line);background:#0a0a0a;
+}
+.log-head{
+  padding:8px 14px;font-size:11px;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.08em;
+  display:flex;align-items:center;gap:8px;
+  border-bottom:1px solid var(--line);
+}
+.log-head::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 1.5s infinite}
+.log-head.off::before{background:var(--dim);animation:none}
+.log-head .clr{margin-left:auto;cursor:pointer;font-size:10px;color:var(--dim)}
+.log-head .clr:hover{color:var(--text)}
+.log-body{
+  height:240px;overflow-y:auto;padding:6px 0;
+  font:11px/1.5 ui-monospace,SF Mono,Consolas,monospace;
+  scrollbar-width:thin;scrollbar-color:#333 transparent;
+}
+.log-body::-webkit-scrollbar{width:6px}
+.log-body::-webkit-scrollbar-thumb{background:#333;border-radius:3px}
+.log-line{padding:1px 14px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:slide .15s ease-out}
+.log-line .ts{color:var(--dim);margin-right:6px}
+.log-line .lvl{display:inline-block;width:30px;font-weight:600}
+.log-line.INFO     .lvl{color:var(--blue)}
+.log-line.WARNING  .lvl{color:var(--yellow)}
+.log-line.ERROR    .lvl{color:var(--red)}
+.log-line.DEBUG    .lvl{color:var(--dim)}
+@keyframes slide{from{transform:translateX(-6px);opacity:0}}
 
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
-  .badge.done        { background: #1a3a2a; color: var(--green); }
-  .badge.processing  { background: #2a2a1a; color: var(--yellow); }
-  .badge.queued      { background: #1a2a3a; color: var(--blue); }
-  .badge.failed      { background: #3a1a1a; color: var(--red); }
-  .badge.deleted     { background: #2a2a2a; color: var(--muted); }
-  .badge.duplicate   { background: #2a1a3a; color: var(--purple); }
-  .badge.unsupported { background: #3a2a1a; color: var(--orange); }
+@keyframes pulse{50%{opacity:.3}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pop{from{transform:translateY(-6px);opacity:0}}
 
-  .btn { padding: 4px 12px; border-radius: 5px; border: 1px solid var(--border); background: transparent;
-    color: var(--muted); cursor: pointer; font-size: 12px; transition: all .15s; }
-  .btn:hover { color: var(--text); border-color: var(--text); }
-  .btn.danger:hover { color: var(--red); border-color: var(--red); }
-  .btn.retry:hover { color: var(--green); border-color: var(--green); }
+/* main */
+main{flex:1;display:flex;flex-direction:column;min-width:0}
+header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
+.search{flex:1;max-width:480px;position:relative}
+.search input{
+  width:100%;background:var(--panel);border:1px solid transparent;border-radius:20px;
+  padding:8px 14px 8px 38px;color:var(--text);font:inherit;
+}
+.search input:focus{outline:0;background:var(--bg);border-color:var(--line)}
+.search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:18px;height:18px;opacity:.6}
+.bulk{display:none;align-items:center;gap:8px;margin-left:auto;animation:pop .15s ease-out}
+.bulk.show{display:flex}
+.bulk .n{color:var(--mute);font-size:13px;margin-right:4px}
+.btn{background:var(--panel);border:1px solid var(--line);color:var(--text);padding:6px 14px;border-radius:18px;cursor:pointer;font:inherit;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:var(--hover)}
+.btn.r{color:var(--green);border-color:#2a4a32}
+.btn.r:hover{background:#1a2a20}
+.btn.d{color:var(--red);border-color:#4a2a2a}
+.btn.d:hover{background:#2a1a1a}
+.btn.s{padding:4px 10px;font-size:12px}
 
-  #empty { text-align: center; color: var(--muted); padding: 48px; display: none; }
-  .filename { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .spin { animation: spin 1s linear infinite; display: inline-block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+/* table */
+.scroll{flex:1;overflow:auto}
+table{width:100%;border-collapse:collapse}
+thead{position:sticky;top:0;background:var(--bg);z-index:1}
+th{text-align:left;padding:10px 16px;font-size:12px;font-weight:500;color:var(--mute);border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{padding-left:24px;width:36px}
+td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
+tr:hover td{background:var(--panel)}
+tr.sel td{background:#1c2a3a}
+
+input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;border:1.5px solid var(--dim);border-radius:3px;cursor:pointer;background:transparent;display:grid;place-content:center;flex-shrink:0}
+input[type=checkbox]:checked{background:var(--blue);border-color:var(--blue)}
+input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid #000;border-width:0 2px 2px 0;transform:rotate(45deg);margin-top:-2px}
+
+.fn{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.muted{color:var(--mute);font-size:13px}
+.dim{color:var(--dim);font-size:13px}
+
+.badge{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.badge::before{content:'';width:8px;height:8px;border-radius:50%}
+.badge.queued::before{background:var(--blue)}
+.badge.processing::before{background:var(--yellow);animation:pulse 1s infinite}
+.badge.done::before{background:var(--green)}
+.badge.failed::before{background:var(--red)}
+.badge.duplicate::before{background:var(--purple)}
+.badge.unsupported::before{background:var(--dim)}
+.badge.deleted::before{background:#444}
+.badge.queued{color:var(--blue)}
+.badge.processing{color:var(--yellow)}
+.badge.done{color:var(--green)}
+.badge.failed{color:var(--red)}
+.badge.duplicate{color:var(--purple)}
+.badge.unsupported,.badge.deleted{color:var(--dim)}
+
+.actions{display:flex;gap:6px;justify-content:flex-end}
+.actions .btn.s{opacity:0;transition:opacity .1s}
+tr:hover .actions .btn.s,tr.sel .actions .btn.s{opacity:1}
+
+#empty{padding:80px;text-align:center;color:var(--dim)}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>data-ingestor</h1>
-  <span id="refresh-dot" title="Live"></span>
-</header>
+<aside>
+  <div class="brand">
+    <span>data ingestor</span>
+    <form method="post" action="/logout" style="margin:0">
+      <button class="out" title="Sign out" type="submit">↪ logout</button>
+    </form>
+  </div>
+  <div class="nav" id="nav">
+    <button data-f="" class="on"><span class="dot all"></span>All<span class="count" id="c-total">0</span></button>
+    <button data-f="queued"><span class="dot queued"></span>Queued<span class="count" id="c-queued">0</span></button>
+    <button data-f="processing"><span class="dot processing"></span>Processing<span class="count" id="c-processing">0</span></button>
+    <button data-f="done"><span class="dot done"></span>Done<span class="count" id="c-done">0</span></button>
+    <button data-f="failed"><span class="dot failed"></span>Failed<span class="count" id="c-failed">0</span></button>
+    <button data-f="duplicate"><span class="dot duplicate"></span>Duplicates<span class="count" id="c-duplicates">0</span></button>
+    <button data-f="unsupported"><span class="dot unsupported"></span>Unsupported<span class="count" id="c-unsupported">0</span></button>
+  </div>
+  <div class="spacer"></div>
+  <div class="log">
+    <div class="log-head" id="log-head">
+      <span>activity</span>
+      <span class="clr" id="log-clear">clear</span>
+    </div>
+    <div class="log-body" id="log-body"></div>
+  </div>
+</aside>
 
-<div class="stats">
-  <div class="stat-card"><div class="label">Total</div><div class="value" id="s-total">—</div></div>
-  <div class="stat-card"><div class="label">Queued</div><div class="value" id="s-queued" style="color:var(--blue)">—</div></div>
-  <div class="stat-card"><div class="label">Processing</div><div class="value" id="s-processing" style="color:var(--yellow)">—</div></div>
-  <div class="stat-card"><div class="label">Done</div><div class="value" id="s-done" style="color:var(--green)">—</div></div>
-  <div class="stat-card"><div class="label">Failed</div><div class="value" id="s-failed" style="color:var(--red)">—</div></div>
-  <div class="stat-card"><div class="label">Duplicates</div><div class="value" id="s-duplicates" style="color:var(--purple)">—</div></div>
-</div>
+<main>
+  <header>
+    <div class="search">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="q" placeholder="Search files…">
+    </div>
+    <div class="bulk" id="bulk">
+      <span class="n"><span id="sel-n">0</span> selected</span>
+      <button class="btn r" id="b-retry">Retry</button>
+      <button class="btn d" id="b-del">Remove</button>
+      <button class="btn" id="b-clear">Clear</button>
+    </div>
+  </header>
 
-<div class="toolbar">
-  <button class="filter-btn active" data-filter="">All</button>
-  <button class="filter-btn" data-filter="queued">Queued</button>
-  <button class="filter-btn" data-filter="processing">Processing</button>
-  <button class="filter-btn" data-filter="done">Done</button>
-  <button class="filter-btn" data-filter="failed">Failed</button>
-  <button class="filter-btn" data-filter="duplicate">Duplicates</button>
-  <button class="filter-btn" data-filter="unsupported">Unsupported</button>
-  <input id="search" type="text" placeholder="Search filename…">
-</div>
-
-<div class="table-wrap">
-  <table>
-    <thead>
-      <tr>
-        <th>Filename</th>
-        <th>Status</th>
-        <th>Chunks</th>
-        <th>Size</th>
-        <th>Date</th>
-        <th>Actions</th>
-      </tr>
-    </thead>
-    <tbody id="file-tbody"></tbody>
-  </table>
-  <div id="empty">No files found.</div>
-</div>
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="all-cb"></th>
+          <th>Filename</th>
+          <th>Status</th>
+          <th>Chunks</th>
+          <th>Size</th>
+          <th>Date</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" style="display:none">No files</div>
+  </div>
+</main>
 
 <script>
-  let activeFilter = '';
-  let searchTerm = '';
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
+const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
 
-  function fmt_size(b) {
-    if (!b) return '—';
-    if (b < 1024) return b + ' B';
-    if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
-    return (b/1024/1024).toFixed(1) + ' MB';
-  }
-  function fmt_date(s) {
-    if (!s) return '—';
-    return new Date(s).toLocaleString();
-  }
-  function badge(status) {
-    return `<span class="badge ${status}">${status}</span>`;
-  }
-  function actions(file) {
-    const btns = [];
-    if (file.status === 'done' || file.status === 'processing') {
-      btns.push(`<button class="btn danger" onclick="deleteFile('${file.id}', false)">Delete from KB</button>`);
-    }
-    if (file.status === 'failed') {
-      btns.push(`<button class="btn retry" onclick="retryFile('${file.id}')">Retry</button>`);
-      btns.push(`<button class="btn danger" onclick="deleteFile('${file.id}', true)">Remove</button>`);
-    }
-    return btns.join(' ');
-  }
+let F='', S='', selected=new Set(), files=[];
 
-  async function loadStatus() {
-    const r = await fetch('/status');
-    const d = await r.json();
-    document.getElementById('s-total').textContent = d.total;
-    document.getElementById('s-queued').textContent = d.queued;
-    document.getElementById('s-processing').textContent = d.processing;
-    document.getElementById('s-done').textContent = d.done;
-    document.getElementById('s-failed').textContent = d.failed;
-    document.getElementById('s-duplicates').textContent = d.duplicates;
-  }
+function renderBulk(){
+  const n=selected.size;
+  $('sel-n').textContent=n;
+  $('bulk').classList.toggle('show', n>0);
+  document.querySelectorAll('tr[data-id]').forEach(tr=>tr.classList.toggle('sel', selected.has(tr.dataset.id)));
+  const visible=files.map(f=>f.id);
+  const allSel=visible.length>0 && visible.every(id=>selected.has(id));
+  $('all-cb').checked=allSel;
+  $('all-cb').indeterminate=!allSel && visible.some(id=>selected.has(id));
+}
 
-  async function loadFiles() {
-    let url = '/files?';
-    if (activeFilter) url += `status=${activeFilter}&`;
-    if (searchTerm) url += `search=${encodeURIComponent(searchTerm)}&`;
-    const r = await fetch(url);
-    const files = await r.json();
-    const tbody = document.getElementById('file-tbody');
-    const empty = document.getElementById('empty');
-    if (!files.length) {
-      tbody.innerHTML = '';
-      empty.style.display = 'block';
-      return;
-    }
-    empty.style.display = 'none';
-    tbody.innerHTML = files.map(f => `
-      <tr>
-        <td><div class="filename" title="${f.filename}">${f.filename}</div></td>
-        <td>${badge(f.status)}</td>
-        <td>${f.qdrant_chunk_count ?? '—'}</td>
-        <td>${fmt_size(f.file_size_bytes)}</td>
-        <td>${fmt_date(f.ingested_at || f.created_at)}</td>
-        <td>${actions(f)}</td>
+function rowActions(f){
+  const a=[];
+  if(f.status==='done'||f.status==='processing')a.push(`<button class="btn s d" onclick="del('${f.id}',0)">Remove</button>`);
+  if(f.status==='failed'){a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);a.push(`<button class="btn s d" onclick="del('${f.id}',1)">Delete</button>`);}
+  if(f.status==='duplicate'||f.status==='unsupported')a.push(`<button class="btn s d" onclick="del('${f.id}',1)">Delete</button>`);
+  return a.join('');
+}
+
+async function load(){
+  try{
+    const [s,fs]=await Promise.all([
+      fetch('/status').then(r=>r.json()),
+      fetch('/files?'+(F?`status=${F}&`:'')+(S?`search=${encodeURIComponent(S)}`:'')).then(r=>r.json())
+    ]);
+    $('c-total').textContent=s.total;
+    $('c-queued').textContent=s.queued;
+    $('c-processing').textContent=s.processing;
+    $('c-done').textContent=s.done;
+    $('c-failed').textContent=s.failed;
+    $('c-duplicates').textContent=s.duplicates;
+    $('c-unsupported').textContent=s.unsupported;
+    $('live').classList.remove('off');
+    files=fs;
+    $('empty').style.display=fs.length?'none':'block';
+    $('rows').innerHTML=fs.map(f=>`
+      <tr data-id="${f.id}" class="${selected.has(f.id)?'sel':''}">
+        <td><input type="checkbox" ${selected.has(f.id)?'checked':''} onchange="tog('${f.id}',this.checked)"></td>
+        <td><div class="fn" title="${esc(f.filename)}">${esc(f.filename)}</div></td>
+        <td><span class="badge ${f.status}">${f.status}</span></td>
+        <td class="muted">${f.qdrant_chunk_count??'—'}</td>
+        <td class="muted">${sz(f.file_size_bytes)}</td>
+        <td class="dim">${dt(f.ingested_at||f.created_at)}</td>
+        <td><div class="actions">${rowActions(f)}</div></td>
       </tr>`).join('');
-  }
+    renderBulk();
+  }catch{$('live').classList.add('off');}
+}
 
-  async function deleteFile(id, physical) {
-    if (!confirm('Remove from knowledge base?')) return;
-    await fetch(`/files/${id}?delete_physical=${physical}`, { method: 'DELETE' });
-    refresh();
-  }
+function tog(id,on){on?selected.add(id):selected.delete(id);renderBulk();}
 
-  async function retryFile(id) {
-    await fetch(`/files/${id}/retry`, { method: 'POST' });
-    refresh();
-  }
+$('all-cb').onchange=e=>{
+  if(e.target.checked) files.forEach(f=>selected.add(f.id));
+  else files.forEach(f=>selected.delete(f.id));
+  renderBulk();
+};
 
-  async function refresh() {
-    await Promise.all([loadStatus(), loadFiles()]);
-  }
+$('b-clear').onclick=()=>{selected.clear();renderBulk();};
+$('b-retry').onclick=async()=>{
+  if(!confirm(`Retry ${selected.size} file(s)?`))return;
+  await fetch('/files/bulk/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
+  selected.clear(); load();
+};
+$('b-del').onclick=async()=>{
+  const phys=confirm(`Remove ${selected.size} file(s) — also delete physical file? (Cancel = keep file)`);
+  await fetch('/files/bulk/delete?delete_physical='+(phys?'true':'false'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
+  selected.clear(); load();
+};
 
-  document.querySelectorAll('.filter-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      activeFilter = btn.dataset.filter;
-      loadFiles();
-    });
-  });
+async function del(id,phys){
+  if(!confirm('Remove?'))return;
+  await fetch(`/files/${id}?delete_physical=${phys?'true':'false'}`,{method:'DELETE'});
+  load();
+}
+async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 
-  let searchTimer;
-  document.getElementById('search').addEventListener('input', e => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { searchTerm = e.target.value; loadFiles(); }, 300);
-  });
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on'));
+  b.classList.add('on'); F=b.dataset.f; selected.clear(); load();
+});
 
-  refresh();
-  setInterval(refresh, 4000);
+let t;
+$('q').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{S=e.target.value;load()},250)};
+
+load(); setInterval(load,2500);
+
+// ── live event log via SSE ──
+const logBody=$('log-body'), logHead=$('log-head');
+const MAX_LINES=300;
+let es=null;
+
+function fmtTime(iso){
+  const d=new Date(iso);
+  return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function appendLog(evt){
+  const atBottom=logBody.scrollHeight-logBody.scrollTop-logBody.clientHeight<20;
+  const line=document.createElement('div');
+  line.className='log-line '+(evt.lvl||'INFO');
+  line.innerHTML=`<span class="ts">${fmtTime(evt.t)}</span><span class="lvl">${esc(evt.lvl||'INFO')}</span>${esc(evt.msg||'')}`;
+  logBody.appendChild(line);
+  while(logBody.children.length>MAX_LINES) logBody.removeChild(logBody.firstChild);
+  if(atBottom) logBody.scrollTop=logBody.scrollHeight;
+}
+function connect(){
+  if(es){try{es.close()}catch{}}
+  es=new EventSource('/events');
+  es.onopen=()=>logHead.classList.remove('off');
+  es.onerror=()=>{logHead.classList.add('off');setTimeout(connect,3000)};
+  es.onmessage=e=>{try{appendLog(JSON.parse(e.data))}catch{}};
+}
+connect();
+
+$('log-clear').onclick=()=>{logBody.innerHTML=''};
 </script>
 </body>
 </html>

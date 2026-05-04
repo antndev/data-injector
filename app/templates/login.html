@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Sign in</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f0f;color:#f1f1f1;font:14px/1.5 Inter,system-ui,sans-serif;min-height:100vh;display:grid;place-items:center}
+.card{background:#1f1f1f;border:1px solid #303030;border-radius:12px;padding:32px 28px;width:320px}
+h1{font-size:16px;font-weight:600;margin-bottom:6px}
+.sub{color:#aaa;font-size:13px;margin-bottom:24px}
+input{width:100%;background:#0f0f0f;border:1px solid #303030;border-radius:6px;padding:11px 14px;color:#f1f1f1;font:inherit;letter-spacing:.5em;text-align:center;font-size:18px}
+input:focus{outline:0;border-color:#3ea6ff}
+button{width:100%;margin-top:14px;background:#3ea6ff;border:0;color:#000;padding:11px;border-radius:6px;font:500 14px Inter,sans-serif;cursor:pointer}
+button:hover{background:#5fb6ff}
+.err{color:#f28b82;font-size:13px;margin-top:14px;text-align:center}
+.brand{color:#717171;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:18px;text-align:center}
+</style>
+</head>
+<body>
+<form class="card" method="post" action="/login">
+  <div class="brand">data ingestor</div>
+  <h1>Enter PIN</h1>
+  <div class="sub">Authentication required.</div>
+  <input type="password" name="pin" inputmode="numeric" autocomplete="off" autofocus maxlength="32">
+  <button type="submit">Sign in</button>
+  {% if error %}<div class="err">Invalid PIN</div>{% endif %}
+</form>
+</body>
+</html>
