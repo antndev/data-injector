@@ -340,7 +340,11 @@ async def _ensure_qdrant_collection():
 # ---------------------------------------------------------------------------
 
 def _qdrant_client() -> AsyncQdrantClient:
-    return AsyncQdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
+    return AsyncQdrantClient(
+        host=settings.qdrant_host,
+        port=settings.qdrant_port,
+        api_key=settings.qdrant_api_key,
+    )
 
 
 def _sha256(path: Path) -> str:

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
+    qdrant_api_key: str | None = None
     qdrant_collection: str = "documents"
     embedding_dimensions: int = 768
 
