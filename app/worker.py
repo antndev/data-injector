@@ -273,7 +273,7 @@ async def _embed_and_upload(file_id: str, filename: str, chunks: list[str]):
     qdrant = _qdrant_client()
 
     # Clean existing vectors for this file before inserting (idempotent)
-    await _qdrant_delete(qdrant, filename)
+    await _qdrant_delete(qdrant, file_id, filename)
 
     points = []
     batch_size = 32
