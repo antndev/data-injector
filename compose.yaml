@@ -13,10 +13,10 @@ services:
       - ./db:/db
     networks:
       - proxy
-      - rag-internal
+      - openwebui_rag-internal
 
 networks:
   proxy:
     external: true
-  rag-internal:
+  openwebui_rag-internal:
     external: true
