@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     chunk_size: int = 512
     chunk_overlap: int = 50
-    worker_concurrency: int = 16
+    worker_concurrency: int = 32
     embedding_batch_size: int = 64   # chunks per Ollama embed request
     stability_wait_s: int = 2        # seconds to wait before processing inbox files
 

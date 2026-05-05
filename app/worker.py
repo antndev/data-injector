@@ -271,9 +271,9 @@ async def _process_file(path: Path, file_id: str):
         if not chunks:
             raise ValueError("No chunks produced")
 
-        # 8. Embed + upload to Qdrant
-        await _embed_and_upload(file_id, proc_path.name, chunks)
-        await _register_openwebui_file(file_id, proc_path.name, file_hash, proc_path.stat().st_size)
+        # 8. Embed, upsert to Qdrant, and register in OpenWebUI
+        # Delete stale data first, then embed, then upsert+register in parallel.
+        await _embed_and_upload(file_id, proc_path.name, chunks, file_hash, proc_path.stat().st_size)
 
         # 9. Move to done
         if proc_path.exists():
@@ -340,17 +340,45 @@ def _extract_text(path: Path, ext: str) -> str:
 # Embedding + Qdrant
 # ---------------------------------------------------------------------------
 
-async def _embed_and_upload(file_id: str, filename: str, chunks: list[str]):
+async def _embed_and_upload(
+    file_id: str, filename: str, chunks: list[str],
+    file_hash: str, file_size: int,
+):
+    """
+    Full pipeline: delete stale data → embed → upsert + register in parallel.
+
+    Delete phase:    Qdrant delete  ║  OpenWebUI unregister   (parallel)
+    Embed phase:     all batches fired concurrently            (parallel)
+    Finish phase:    Qdrant upsert  ║  OpenWebUI register      (parallel)
+    """
     ollama = _ollama_global
     qdrant = _qdrant_global
 
-    await _qdrant_delete(qdrant, file_id, filename)
+    # ── 1. Delete old data (Qdrant vectors + OpenWebUI entry) in parallel ──
+    async def _del_qdrant():
+        try:
+            await qdrant.delete(
+                collection_name=settings.qdrant_collection,
+                points_selector=Filter(
+                    must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
+                ),
+            )
+        except Exception as e:
+            logger.warning("Qdrant delete failed for %s: %s", file_id, e)
 
+    async def _del_owui():
+        try:
+            await _unregister_openwebui_file(file_id)
+        except Exception as e:
+            logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
+
+    await asyncio.gather(_del_qdrant(), _del_owui())
+
+    # ── 2. Embed all batches concurrently ──────────────────────────────────
     now = datetime.now(timezone.utc).isoformat()
     batch_size = settings.embedding_batch_size
     batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
 
-    # Fire all embed requests concurrently — cuts per-file embed latency by ~Nx
     async def _embed_one(batch: list[str]) -> list:
         resp = await ollama.embed(model=settings.embedding_model, input=batch)
         return resp.embeddings
@@ -379,32 +407,44 @@ async def _embed_and_upload(file_id: str, filename: str, chunks: list[str]):
                 )
             )
 
-    # Upsert in parallel batches of 256
+    # ── 3. Upsert to Qdrant + register in OpenWebUI in parallel ───────────
     upsert_size = 256
-    await asyncio.gather(*[
-        qdrant.upsert(
-            collection_name=settings.qdrant_collection,
-            points=points[i : i + upsert_size],
-        )
-        for i in range(0, len(points), upsert_size)
-    ])
+
+    async def _do_upsert():
+        await asyncio.gather(*[
+            qdrant.upsert(
+                collection_name=settings.qdrant_collection,
+                points=points[i : i + upsert_size],
+            )
+            for i in range(0, len(points), upsert_size)
+        ])
+
+    await asyncio.gather(
+        _do_upsert(),
+        _register_openwebui_file(file_id, filename, file_hash, file_size),
+    )
 
 
 async def _qdrant_delete(qdrant: AsyncQdrantClient, file_id: str, filename: str):
-    """Delete vectors and openwebui rows for a given file_id."""
-    try:
-        await qdrant.delete(
-            collection_name=settings.qdrant_collection,
-            points_selector=Filter(
-                must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
-            ),
-        )
-    except Exception as e:
-        logger.warning("Qdrant delete failed for %s: %s", file_id, e)
-    try:
-        await _unregister_openwebui_file(file_id)
-    except Exception as e:
-        logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
+    """Delete Qdrant vectors and OpenWebUI rows for a given file_id (in parallel)."""
+    async def _del_q():
+        try:
+            await qdrant.delete(
+                collection_name=settings.qdrant_collection,
+                points_selector=Filter(
+                    must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
+                ),
+            )
+        except Exception as e:
+            logger.warning("Qdrant delete failed for %s: %s", file_id, e)
+
+    async def _del_o():
+        try:
+            await _unregister_openwebui_file(file_id)
+        except Exception as e:
+            logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
+
+    await asyncio.gather(_del_q(), _del_o())
 
 
 async def _ensure_qdrant_collection():
