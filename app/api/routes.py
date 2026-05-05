@@ -128,11 +128,7 @@ async def delete_file(file_id: str, delete_physical: bool = False):
         raise HTTPException(404, "File not found")
     row = dict(row)
 
-    qdrant = _qdrant_client()
-    try:
-        await _qdrant_delete(qdrant, row["id"], row["filename"])
-    finally:
-        await qdrant.close()
+    await _qdrant_delete(_qdrant_client(), row["id"], row["filename"])
 
     async with connect() as db:
         await db.execute(

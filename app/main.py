@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
     observer.join()
     worker_task.cancel()
 
+    from app.worker import _qdrant_global
+    if _qdrant_global is not None:
+        await _qdrant_global.close()
+
 
 app = FastAPI(title="data-ingestor", lifespan=lifespan)
 
