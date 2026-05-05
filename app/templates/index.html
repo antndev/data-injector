@@ -46,23 +46,27 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 
 .spacer{flex:1;min-height:8px}
 
-.nav-purge{
+/* cleanup section */
+.cleanup{
+  display:none;flex-direction:column;flex-shrink:0;
+  border-top:1px solid var(--line);
+}
+.cleanup-head{
+  padding:8px 20px;font-size:12px;color:var(--mute);font-weight:500;
+  display:flex;align-items:center;gap:8px;
+}
+.cleanup-btn{
   background:none;border:0;cursor:pointer;font:inherit;
-  padding:2px 16px 6px 44px;text-align:left;
-  display:none;align-items:center;gap:5px;
-  font-size:11px;color:var(--red);opacity:.55;
-  border-left:3px solid transparent;
+  padding:7px 20px;text-align:left;display:flex;align-items:center;gap:10px;
+  color:var(--mute);font-size:13px;border-left:3px solid transparent;
+  width:100%;
 }
-.nav-purge:hover{opacity:1;background:var(--hover);border-left-color:var(--red)}
-.nav-purge svg{width:11px;height:11px;flex-shrink:0}
-.nav-purge-all{
-  display:none;background:none;border:0;border-top:1px solid var(--line);
-  cursor:pointer;font:inherit;padding:8px 20px;text-align:left;
-  align-items:center;gap:6px;font-size:12px;color:var(--red);opacity:.6;
-  border-left:3px solid transparent;
-}
-.nav-purge-all:hover{opacity:1;background:var(--hover);border-left-color:var(--red)}
-.nav-purge-all svg{width:13px;height:13px;flex-shrink:0}
+.cleanup-btn:hover{background:var(--hover);color:var(--red);border-left-color:var(--red)}
+.cleanup-btn svg{width:14px;height:14px;flex-shrink:0;opacity:.5}
+.cleanup-btn:hover svg{opacity:1}
+.cleanup-btn .cc{margin-left:auto;font-size:12px;color:var(--dim);background:var(--panel);padding:1px 8px;border-radius:10px;min-width:24px;text-align:center}
+.cleanup-btn.danger{color:var(--red);opacity:.7;border-top:1px solid var(--line);margin-top:2px}
+.cleanup-btn.danger:hover{opacity:1}
 
 /* live log */
 .log{
@@ -194,26 +198,29 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
     <button data-f="processing"><span class="dot processing"></span>Processing<span class="count" id="c-processing">0</span></button>
     <button data-f="done"><span class="dot done"></span>Done<span class="count" id="c-done">0</span></button>
     <button data-f="failed"><span class="dot failed"></span>Failed<span class="count" id="c-failed">0</span></button>
-    <button class="nav-purge" id="purge-failed">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-      Delete all failed
-    </button>
     <button data-f="duplicate"><span class="dot duplicate"></span>Duplicates<span class="count" id="c-duplicates">0</span></button>
-    <button class="nav-purge" id="purge-dup">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-      Delete all duplicates
-    </button>
     <button data-f="unsupported"><span class="dot unsupported"></span>Unsupported<span class="count" id="c-unsupported">0</span></button>
-    <button class="nav-purge" id="purge-uns">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-      Delete all unsupported
-    </button>
-    <button class="nav-purge-all" id="purge-all">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-      Purge errors
-    </button>
   </div>
   <div class="spacer"></div>
+  <div class="cleanup" id="cleanup">
+    <div class="cleanup-head">Cleanup</div>
+    <button class="cleanup-btn" id="purge-failed" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all failed<span class="cc" id="cc-failed">0</span>
+    </button>
+    <button class="cleanup-btn" id="purge-dup" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all duplicates<span class="cc" id="cc-dup">0</span>
+    </button>
+    <button class="cleanup-btn" id="purge-uns" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all unsupported<span class="cc" id="cc-uns">0</span>
+    </button>
+    <button class="cleanup-btn danger" id="purge-all" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all errors<span class="cc" id="cc-all">0</span>
+    </button>
+  </div>
   <div class="log">
     <div class="log-head" id="log-head">
       <span>Activity</span>
@@ -352,12 +359,18 @@ function updateCounts(s){
   $('c-failed').textContent=s.failed;
   $('c-duplicates').textContent=s.duplicates;
   $('c-unsupported').textContent=s.unsupported;
-  const show=el=>el.style.display='flex';
-  const hide=el=>el.style.display='none';
-  s.failed>0    ? show($('purge-failed')) : hide($('purge-failed'));
-  s.duplicates>0? show($('purge-dup'))    : hide($('purge-dup'));
-  s.unsupported>0?show($('purge-uns'))    : hide($('purge-uns'));
-  s.failed+s.duplicates+s.unsupported>0 ? show($('purge-all')) : hide($('purge-all'));
+
+  // Cleanup section — show only when something needs cleaning
+  const errors=s.failed+s.duplicates+s.unsupported;
+  $('cleanup').style.display=errors>0?'flex':'none';
+  function cbtn(id,ccid,n){$('cc-'+ccid).textContent=n;$('purge-'+id).style.display=n>0?'flex':'none';}
+  cbtn('failed','failed',s.failed);
+  cbtn('dup',   'dup',   s.duplicates);
+  cbtn('uns',   'uns',   s.unsupported);
+  // "Delete all errors" only when 2+ categories have files (otherwise redundant)
+  const multiCategory=[s.failed>0,s.duplicates>0,s.unsupported>0].filter(Boolean).length>1;
+  $('cc-all').textContent=errors;
+  $('purge-all').style.display=multiCategory?'flex':'none';
 }
 
 // ── Load first page + reset ───────────────────────────────────────────────
