@@ -283,7 +283,6 @@ async function load(){
     $('c-failed').textContent=s.failed;
     $('c-duplicates').textContent=s.duplicates;
     $('c-unsupported').textContent=s.unsupported;
-    $('live').classList.remove('off');
     files=fs;
     $('empty').style.display=fs.length?'none':'block';
     $('rows').innerHTML=fs.map(f=>`
@@ -297,7 +296,7 @@ async function load(){
         <td><div class="actions">${rowActions(f)}</div></td>
       </tr>`).join('');
     renderBulk();
-  }catch{$('live').classList.add('off');}
+  }catch(e){console.error('load failed',e);}
 }
 
 function tog(id,on){on?selected.add(id):selected.delete(id);renderBulk();}
