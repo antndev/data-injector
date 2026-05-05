@@ -187,6 +187,22 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .actions{display:flex;gap:6px;justify-content:flex-end}
 
 #empty{padding:80px;text-align:center;color:var(--dim)}
+
+/* progress toast */
+#toast{
+  position:fixed;bottom:24px;right:24px;z-index:200;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:14px 18px;min-width:220px;max-width:300px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+  display:none;flex-direction:column;gap:8px;
+  animation:pop .2s ease-out;
+}
+#toast.show{display:flex}
+.toast-title{font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;color:var(--text)}
+.toast-title svg{width:14px;height:14px;flex-shrink:0}
+.toast-bar-wrap{background:var(--line);border-radius:3px;height:3px}
+.toast-bar{height:100%;border-radius:3px;transition:width .15s,background .3s;width:0%}
+.toast-sub{font-size:11px;color:var(--dim)}
 </style>
 </head>
 <body>
@@ -291,6 +307,15 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
     <div id="sentinel" style="height:1px"></div>
   </div>
 </main>
+
+<div id="toast">
+  <div class="toast-title">
+    <svg id="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+    <span id="toast-title">Deleting…</span>
+  </div>
+  <div class="toast-bar-wrap"><div class="toast-bar" id="toast-bar"></div></div>
+  <div class="toast-sub" id="toast-sub"></div>
+</div>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -449,6 +474,56 @@ $('all-cb').onchange=async e=>{
   }
 };
 
+// ── Toast progress ────────────────────────────────────────────────────────
+let toastTimer=null;
+function toastProgress(title,done,total){
+  clearTimeout(toastTimer);
+  const pct=total>0?Math.round(done/total*100):0;
+  $('toast-title').textContent=title;
+  $('toast-bar').style.width=pct+'%';
+  $('toast-bar').style.background='var(--blue)';
+  $('toast-sub').textContent=total>1?`${done} / ${total} files`:'';
+  $('toast').classList.add('show');
+}
+function toastDone(msg,n){
+  $('toast-title').textContent=msg+(n?' ('+n+')':'');
+  $('toast-bar').style.width='100%';
+  $('toast-bar').style.background='var(--green)';
+  $('toast-sub').textContent='';
+  toastTimer=setTimeout(()=>$('toast').classList.remove('show'),2500);
+}
+function toastError(msg){
+  $('toast-title').textContent=msg;
+  $('toast-bar').style.width='100%';
+  $('toast-bar').style.background='var(--red)';
+  $('toast-sub').textContent='';
+  toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3000);
+}
+
+// Batch-deletes ids with live progress updates, returns count deleted
+async function deleteWithProgress(ids){
+  const total=ids.length;
+  const BATCH=50;
+  let done=0;
+  toastProgress('Deleting…',0,total);
+  try{
+    for(let i=0;i<ids.length;i+=BATCH){
+      const batch=ids.slice(i,i+BATCH);
+      const res=await fetch('/files/bulk/delete?delete_physical=true',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ids:batch})
+      }).then(r=>r.json());
+      done+=res.deleted??batch.length;
+      toastProgress('Deleting…',done,total);
+    }
+    toastDone('Deleted',done);
+  }catch(e){
+    toastError('Delete failed');
+    console.error(e);
+  }
+  return done;
+}
+
 // ── Bulk actions ──────────────────────────────────────────────────────────
 $('b-retry').onclick=async()=>{
   if(!confirm(`Retry ${selected.size} file(s)?`))return;
@@ -456,45 +531,51 @@ $('b-retry').onclick=async()=>{
   selected.clear();load();
 };
 $('b-del').onclick=async()=>{
-  if(!confirm(`Delete ${selected.size} file(s)? They will be removed from the knowledge base, database and disk.`))return;
-  await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
-  selected.clear();load();
+  const ids=[...selected];
+  if(!confirm(`Delete ${ids.length} file(s)?\nThey will be permanently removed from the knowledge base, database and disk.`))return;
+  selected.clear();
+  await deleteWithProgress(ids);
+  load();
 };
 
 async function del(id){
-  if(!confirm('Delete this file? It will be removed from the knowledge base, database and disk.'))return;
-  await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
+  if(!confirm('Delete this file? It will be permanently removed from the knowledge base, database and disk.'))return;
+  toastProgress('Deleting…',0,1);
+  try{
+    await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
+    toastDone('File deleted');
+  }catch(e){toastError('Delete failed');}
   load();
 }
 async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 
 // ── Purge helpers ─────────────────────────────────────────────────────────
-async function purgeStatus(status,label){
-  const n=parseInt($('c-'+( status==='duplicate'?'duplicates':status==='unsupported'?'unsupported':status)).textContent)||0;
-  if(!confirm(`Delete all ${n} ${label}? They will be removed from disk and database.`))return;
+async function purgeByStatus(status,countId,label){
+  const n=parseInt($(countId).textContent)||0;
+  if(!n)return;
+  if(!confirm(`Delete all ${n} ${label}?\nFiles will be permanently removed from disk, database and knowledge base.`))return;
   const ids=await fetch(idsQS(status)).then(r=>r.json());
   if(!ids.length)return;
-  await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  await deleteWithProgress(ids);
   load();
 }
 
-$('purge-failed').onclick=()=>purgeStatus('failed','failed');
-$('purge-dup').onclick=   ()=>purgeStatus('duplicate','duplicates');
-$('purge-uns').onclick=   ()=>purgeStatus('unsupported','unsupported');
+$('purge-failed').onclick=()=>purgeByStatus('failed',   'c-failed',      'failed files');
+$('purge-dup').onclick=   ()=>purgeByStatus('duplicate','c-duplicates',   'duplicates');
+$('purge-uns').onclick=   ()=>purgeByStatus('unsupported','c-unsupported','unsupported files');
 $('purge-all').onclick=async()=>{
   const nf=parseInt($('c-failed').textContent)||0;
   const nd=parseInt($('c-duplicates').textContent)||0;
   const nu=parseInt($('c-unsupported').textContent)||0;
   const total=nf+nd+nu;
-  if(!confirm(`Purge all errors? This deletes ${total} file(s) (${nf} failed, ${nd} duplicates, ${nu} unsupported) from disk and database.`))return;
+  if(!total)return;
+  if(!confirm(`Delete all ${total} error files?\n${nf} failed · ${nd} duplicates · ${nu} unsupported\nPermanently removed from disk, database and knowledge base.`))return;
   const [fi,di,ui]=await Promise.all([
     fetch(idsQS('failed')).then(r=>r.json()),
     fetch(idsQS('duplicate')).then(r=>r.json()),
     fetch(idsQS('unsupported')).then(r=>r.json()),
   ]);
-  const ids=[...fi,...di,...ui];
-  if(!ids.length)return;
-  await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  await deleteWithProgress([...fi,...di,...ui]);
   load();
 };
 

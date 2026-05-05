@@ -1,7 +1,6 @@
 import json
 import shutil
 import asyncio
-from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
@@ -158,10 +157,7 @@ async def delete_file(file_id: str, delete_physical: bool = False):
     await _qdrant_delete(_qdrant_client(), row["id"], row["filename"])
 
     async with connect() as db:
-        await db.execute(
-            "UPDATE files SET status='deleted', deleted_at=? WHERE id=?",
-            (datetime.now(timezone.utc).isoformat(), file_id),
-        )
+        await db.execute("DELETE FROM files WHERE id=?", (file_id,))
         await db.commit()
 
     if delete_physical:
@@ -229,14 +225,18 @@ class BulkBody(BaseModel):
 
 @router.post("/files/bulk/delete")
 async def bulk_delete(body: BulkBody, delete_physical: bool = False):
-    n = 0
-    for fid in body.ids:
-        try:
-            await delete_file(fid, delete_physical)
-            n += 1
-        except HTTPException:
-            pass
-    return {"ok": True, "deleted": n}
+    sem = asyncio.Semaphore(20)
+
+    async def _one(fid: str) -> int:
+        async with sem:
+            try:
+                await delete_file(fid, delete_physical)
+                return 1
+            except HTTPException:
+                return 0
+
+    results = await asyncio.gather(*[_one(fid) for fid in body.ids])
+    return {"ok": True, "deleted": sum(results)}
 
 
 @router.post("/files/bulk/retry")
