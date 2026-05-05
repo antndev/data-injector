@@ -263,8 +263,8 @@ function renderBulk(){
 function rowActions(f){
   const a=[];
   if(f.status==='failed') a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);
-  if(['done','processing','failed','duplicate','unsupported'].includes(f.status))
-    a.push(`<button class="btn s d" onclick="delAsk('${f.id}','${f.status}')">Delete</button>`);
+  if(f.status!=='deleted')
+    a.push(`<button class="btn s d" onclick="del('${f.id}')">Delete</button>`);
   return a.join('');
 }
 
@@ -312,23 +312,15 @@ $('b-retry').onclick=async()=>{
   selected.clear(); load();
 };
 $('b-del').onclick=async()=>{
-  const phys=confirm(`Remove ${selected.size} file(s) — also delete physical file? (Cancel = keep file)`);
-  await fetch('/files/bulk/delete?delete_physical='+(phys?'true':'false'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
+  if(!confirm(`Delete ${selected.size} file(s)? They will be removed from the knowledge base, database and disk.`)) return;
+  await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
   selected.clear(); load();
 };
 
-async function del(id,phys){
-  await fetch(`/files/${id}?delete_physical=${phys?'true':'false'}`,{method:'DELETE'});
+async function del(id){
+  if(!confirm('Delete this file? It will be removed from the knowledge base, database and disk.')) return;
+  await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
   load();
-}
-async function delAsk(id,status){
-  // done/processing keep file; everything else has no value to keep
-  if(status==='done'||status==='processing'){
-    const phys=confirm('Delete this file?\n\nOK = remove from knowledge base AND delete physical file\nCancel = remove from knowledge base only (keep file in /done)');
-    return del(id, phys);
-  }
-  if(!confirm('Delete this file permanently?')) return;
-  return del(id, true);
 }
 async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 

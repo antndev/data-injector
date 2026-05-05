@@ -143,14 +143,20 @@ async def delete_file(file_id: str, delete_physical: bool = False):
 
     if delete_physical:
         for d in (settings.done_dir, settings.failed_dir,
-                  settings.duplicates_dir, settings.unsupported_dir):
+                  settings.duplicates_dir, settings.unsupported_dir,
+                  settings.processing_dir, settings.inbox_dir):
             p = d / row["filename"]
             if p.exists():
-                p.unlink()
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
                 err = d / (row["filename"] + ".error")
                 if err.exists():
-                    err.unlink()
-                break
+                    try:
+                        err.unlink()
+                    except OSError:
+                        pass
 
     return {"ok": True, "deleted": row["filename"]}
 
