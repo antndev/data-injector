@@ -88,14 +88,14 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 .log-body::-webkit-scrollbar{width:4px}
 .log-body::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:2px}
 .log-line{
-  padding:4px 20px;display:flex;align-items:center;gap:8px;
-  white-space:nowrap;overflow:hidden;animation:slide .12s ease-out;
+  padding:4px 20px;display:flex;align-items:flex-start;gap:8px;
+  animation:slide .12s ease-out;
   border-left:2px solid transparent;
 }
 .log-line:hover{background:var(--hover)}
-.log-line .ldot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-.log-line .ts{font-size:11px;color:var(--dim);flex-shrink:0}
-.log-line .msg{font-size:12px;color:var(--mute);overflow:hidden;text-overflow:ellipsis}
+.log-line .ldot{width:5px;height:5px;border-radius:50%;flex-shrink:0;margin-top:5px}
+.log-line .ts{font-size:11px;color:var(--dim);flex-shrink:0;padding-top:1px}
+.log-line .msg{font-size:12px;color:var(--mute);word-break:break-word;min-width:0}
 .log-line.INFO  .ldot{background:var(--blue)}
 .log-line.INFO  .msg{color:var(--mute)}
 .log-line.WARNING .ldot{background:var(--yellow)}
@@ -269,6 +269,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
       <input id="q" placeholder="Search files…">
     </div>
+    <span id="search-hint" style="font-size:11px;color:var(--dim);white-space:nowrap;display:none"></span>
     <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
       <div class="bulk" id="bulk">
         <span class="n"><span id="sel-n">0</span> selected</span>
@@ -468,6 +469,16 @@ async function load(preserveSel=false){
     appendBatch(batch);
     if(batch.length<PAGE) hasMore=false;
     $('empty').style.display=files.length?'none':'block';
+    // Search/filter hint
+    const hint=$('search-hint');
+    if(S||F){
+      const n=files.length;
+      const plus=hasMore?'+':'';
+      hint.textContent=S?`${n}${plus} match${n===1&&!plus?'':'es'}`:n+plus+' files';
+      hint.style.display='';
+    } else {
+      hint.style.display='none';
+    }
   }catch(e){console.error('load',e);}
 }
 
@@ -478,6 +489,12 @@ function appendBatch(batch){
   batch.forEach(f=>frag.appendChild(makeRow(f)));
   $('rows').appendChild(frag);
   renderBulk();
+  // Keep hint count in sync as more pages load
+  const hint=$('search-hint');
+  if(hint.style.display!=='none'&&hint.textContent){
+    const n=files.length,plus=hasMore?'+':'';
+    hint.textContent=S?`${n}${plus} match${n===1&&!plus?'':'es'}`:n+plus+' files';
+  }
 }
 
 async function loadMore(){

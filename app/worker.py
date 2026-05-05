@@ -199,6 +199,14 @@ async def _process_file(path: Path, file_id: str):
         if not path.exists():
             return
 
+        # Bail out immediately if the file was deleted from the DB before we started
+        # (e.g. deleted while sitting in the queue)
+        async with connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT id FROM files WHERE id=?", (file_id,)) as cur:
+                if not await cur.fetchone():
+                    return
+
         loop = asyncio.get_running_loop()
 
         # 1. Unsupported extension
@@ -288,16 +296,32 @@ async def _process_file(path: Path, file_id: str):
         logger.info("Done: %s (%d chunks)", proc_path.name, len(chunks))
 
     except Exception as exc:
-        logger.exception("Failed: %s — %s", original_path.name, exc)
-        if proc_path is not None and proc_path.exists():
-            failed = _move(proc_path, settings.failed_dir)
-            (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
+        # Check whether the file still exists in the DB.  If it doesn't, the user
+        # deleted it while we were processing — not a real failure, just clean up.
         async with connect() as db:
-            await db.execute(
-                "UPDATE files SET status='failed', error_message=? WHERE id=?",
-                (str(exc)[:2000], file_id),
-            )
-            await db.commit()
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT id FROM files WHERE id=?", (file_id,)) as cur:
+                still_exists = await cur.fetchone()
+
+        if not still_exists:
+            logger.debug("Processing cancelled for %s: deleted while in progress", original_path.name)
+            # Physical file may still be in processing dir — remove it
+            if proc_path is not None and proc_path.exists():
+                try:
+                    proc_path.unlink()
+                except OSError:
+                    pass
+        else:
+            logger.exception("Failed: %s — %s", original_path.name, exc)
+            if proc_path is not None and proc_path.exists():
+                failed = _move(proc_path, settings.failed_dir)
+                (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
+            async with connect() as db:
+                await db.execute(
+                    "UPDATE files SET status='failed', error_message=? WHERE id=?",
+                    (str(exc)[:2000], file_id),
+                )
+                await db.commit()
     finally:
         active_paths.discard(str(original_path))
         if tmpdir:
