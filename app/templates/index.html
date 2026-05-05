@@ -118,7 +118,7 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .btn.r:hover{background:#1a2a20}
 .btn.d{color:var(--red);border-color:#4a2a2a}
 .btn.d:hover{background:#2a1a1a}
-.btn.s{padding:4px 10px;font-size:12px}
+.btn.s{padding:5px 14px;font-size:12px}
 
 /* table */
 .scroll{flex:1;overflow:auto}
@@ -155,8 +155,6 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .badge.unsupported,.badge.deleted{color:var(--dim)}
 
 .actions{display:flex;gap:6px;justify-content:flex-end}
-.actions .btn.s{opacity:0;transition:opacity .1s}
-tr:hover .actions .btn.s,tr.sel .actions .btn.s{opacity:1}
 
 #empty{padding:80px;text-align:center;color:var(--dim)}
 </style>
@@ -264,9 +262,9 @@ function renderBulk(){
 
 function rowActions(f){
   const a=[];
-  if(f.status==='done'||f.status==='processing')a.push(`<button class="btn s d" onclick="del('${f.id}',0)">Remove</button>`);
-  if(f.status==='failed'){a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);a.push(`<button class="btn s d" onclick="del('${f.id}',1)">Delete</button>`);}
-  if(f.status==='duplicate'||f.status==='unsupported')a.push(`<button class="btn s d" onclick="del('${f.id}',1)">Delete</button>`);
+  if(f.status==='failed') a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);
+  if(['done','processing','failed','duplicate','unsupported'].includes(f.status))
+    a.push(`<button class="btn s d" onclick="delAsk('${f.id}','${f.status}')">Delete</button>`);
   return a.join('');
 }
 
@@ -320,9 +318,17 @@ $('b-del').onclick=async()=>{
 };
 
 async function del(id,phys){
-  if(!confirm('Remove?'))return;
   await fetch(`/files/${id}?delete_physical=${phys?'true':'false'}`,{method:'DELETE'});
   load();
+}
+async function delAsk(id,status){
+  // done/processing keep file; everything else has no value to keep
+  if(status==='done'||status==='processing'){
+    const phys=confirm('Delete this file?\n\nOK = remove from knowledge base AND delete physical file\nCancel = remove from knowledge base only (keep file in /done)');
+    return del(id, phys);
+  }
+  if(!confirm('Delete this file permanently?')) return;
+  return del(id, true);
 }
 async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 
