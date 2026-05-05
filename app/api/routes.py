@@ -87,8 +87,33 @@ async def status():
     }
 
 
+@router.get("/files/ids")
+async def list_file_ids(status: str | None = None, search: str | None = None):
+    """Lightweight — returns only IDs (used by select-all to include unloaded rows)."""
+    query = "SELECT id FROM files"
+    params: list = []
+    conds = []
+    if status:
+        conds.append("status=?"); params.append(status)
+    if search:
+        conds.append("filename LIKE ?"); params.append(f"%{search}%")
+    if conds:
+        query += " WHERE " + " AND ".join(conds)
+    query += " ORDER BY created_at DESC"
+    async with connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(query, params) as cur:
+            rows = await cur.fetchall()
+    return [r["id"] for r in rows]
+
+
 @router.get("/files")
-async def list_files(status: str | None = None, search: str | None = None):
+async def list_files(
+    status: str | None = None,
+    search: str | None = None,
+    offset: int = 0,
+    limit: int = 200,
+):
     query = "SELECT * FROM files"
     params: list = []
     conds = []
@@ -98,7 +123,9 @@ async def list_files(status: str | None = None, search: str | None = None):
         conds.append("filename LIKE ?"); params.append(f"%{search}%")
     if conds:
         query += " WHERE " + " AND ".join(conds)
-    query += " ORDER BY created_at DESC LIMIT 500"
+    limit = max(1, min(limit, 2000))
+    offset = max(0, offset)
+    query += f" ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
 
     async with connect() as db:
         db.row_factory = aiosqlite.Row

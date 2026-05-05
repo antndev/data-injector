@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>ingestor</title>
+<title>Data Ingestor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -45,6 +45,24 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 .nav .dot.all{background:var(--text)}
 
 .spacer{flex:1;min-height:8px}
+
+.nav-purge{
+  background:none;border:0;cursor:pointer;font:inherit;
+  padding:2px 16px 6px 44px;text-align:left;
+  display:none;align-items:center;gap:5px;
+  font-size:11px;color:var(--red);opacity:.55;
+  border-left:3px solid transparent;
+}
+.nav-purge:hover{opacity:1;background:var(--hover);border-left-color:var(--red)}
+.nav-purge svg{width:11px;height:11px;flex-shrink:0}
+.nav-purge-all{
+  display:none;background:none;border:0;border-top:1px solid var(--line);
+  cursor:pointer;font:inherit;padding:8px 20px;text-align:left;
+  align-items:center;gap:6px;font-size:12px;color:var(--red);opacity:.6;
+  border-left:3px solid transparent;
+}
+.nav-purge-all:hover{opacity:1;background:var(--hover);border-left-color:var(--red)}
+.nav-purge-all svg{width:13px;height:13px;flex-shrink:0}
 
 /* live log */
 .log{
@@ -98,8 +116,8 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .rates{display:flex;gap:24px;padding:10px 24px;border-bottom:1px solid var(--line);background:#161616;align-items:center}
 .rate{display:flex;align-items:baseline;gap:6px}
 .rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);min-width:34px}
-.rate .u{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
-.rate .l{font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.06em;margin-left:4px}
+.rate .u{font-size:11px;color:var(--dim)}
+.rate .l{font-size:12px;color:var(--mute);margin-left:4px}
 .rate .arrow{font-size:14px;margin-right:2px}
 .rate.in .arrow{color:var(--blue)}
 .rate.out .arrow{color:var(--green)}
@@ -136,7 +154,7 @@ th{text-align:left;padding:10px 16px;font-size:12px;font-weight:500;color:var(--
 th:first-child,td:first-child{padding-left:24px;width:36px}
 td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
 tr:hover td{background:var(--panel)}
-tr.sel td{background:#1c2a3a}
+tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 
 input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;border:1.5px solid var(--dim);border-radius:3px;cursor:pointer;background:transparent;display:grid;place-content:center;flex-shrink:0}
 input[type=checkbox]:checked{background:var(--blue);border-color:var(--blue)}
@@ -176,14 +194,30 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
     <button data-f="processing"><span class="dot processing"></span>Processing<span class="count" id="c-processing">0</span></button>
     <button data-f="done"><span class="dot done"></span>Done<span class="count" id="c-done">0</span></button>
     <button data-f="failed"><span class="dot failed"></span>Failed<span class="count" id="c-failed">0</span></button>
+    <button class="nav-purge" id="purge-failed">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all failed
+    </button>
     <button data-f="duplicate"><span class="dot duplicate"></span>Duplicates<span class="count" id="c-duplicates">0</span></button>
+    <button class="nav-purge" id="purge-dup">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all duplicates
+    </button>
     <button data-f="unsupported"><span class="dot unsupported"></span>Unsupported<span class="count" id="c-unsupported">0</span></button>
+    <button class="nav-purge" id="purge-uns">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Delete all unsupported
+    </button>
+    <button class="nav-purge-all" id="purge-all">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      Purge errors
+    </button>
   </div>
   <div class="spacer"></div>
   <div class="log">
     <div class="log-head" id="log-head">
       <span>Activity</span>
-      <span class="clr" id="log-clear">clear</span>
+      <span class="clr" id="log-clear">Clear</span>
     </div>
     <div class="log-body" id="log-body"></div>
   </div>
@@ -200,7 +234,6 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <span class="n"><span id="sel-n">0</span> selected</span>
         <button class="btn r" id="b-retry">Retry</button>
         <button class="btn d" id="b-del">Delete</button>
-        <button class="btn" id="b-clear">Clear</button>
       </div>
       <form method="post" action="/logout" style="margin:0">
         <button class="logout-btn" title="Sign out" type="submit">
@@ -214,18 +247,18 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
     <div class="rate in">
       <span class="arrow">↓</span>
       <span class="v" id="r-in">0.0</span><span class="u">/s</span>
-      <span class="l">ingest</span>
+      <span class="l">Ingest</span>
       <span class="spark" id="spark-in"></span>
     </div>
     <div class="rate out">
       <span class="arrow">↑</span>
       <span class="v" id="r-out">0.0</span><span class="u">/s</span>
-      <span class="l">complete</span>
+      <span class="l">Complete</span>
       <span class="spark" id="spark-out"></span>
     </div>
     <div class="rate act">
       <span class="v" id="r-act">0</span>
-      <span class="l">active</span>
+      <span class="l">Active</span>
     </div>
     <div class="rate tput">
       Last min · <b id="r-min-in">0</b> in · <b id="r-min-out">0</b> done
@@ -248,6 +281,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       <tbody id="rows"></tbody>
     </table>
     <div id="empty" style="display:none">No files</div>
+    <div id="sentinel" style="height:1px"></div>
   </div>
 </main>
 
@@ -257,169 +291,257 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
 
-let F='', S='', selected=new Set(), files=[];
+let F='',S='',selected=new Set(),files=[];
+let pageOffset=0,hasMore=true,loadingMore=false;
+const PAGE=200;
+let reloadDebounce=null;
 
+// ── Render bulk bar ───────────────────────────────────────────────────────
 function renderBulk(){
   const n=selected.size;
   $('sel-n').textContent=n;
-  $('bulk').classList.toggle('show', n>0);
-  document.querySelectorAll('tr[data-id]').forEach(tr=>tr.classList.toggle('sel', selected.has(tr.dataset.id)));
-  const visible=files.map(f=>f.id);
-  const allSel=visible.length>0 && visible.every(id=>selected.has(id));
-  $('all-cb').checked=allSel;
-  $('all-cb').indeterminate=!allSel && visible.some(id=>selected.has(id));
-  // Retry only when every selected file has status==='failed'
+  $('bulk').classList.toggle('show',n>0);
+  const tbody=$('rows');
+  const allVis=files.length>0&&files.every(f=>selected.has(f.id));
+  if(allVis){
+    // O(1): one CSS class covers all rows instantly
+    tbody.classList.add('all-sel');
+  } else {
+    tbody.classList.remove('all-sel');
+    // Only touch rows whose state actually changed
+    tbody.querySelectorAll('tr[data-id]').forEach(tr=>{
+      const want=selected.has(tr.dataset.id);
+      if(tr.classList.contains('sel')!==want) tr.classList.toggle('sel',want);
+    });
+  }
+  $('all-cb').checked=allVis&&n>0;
+  $('all-cb').indeterminate=n>0&&!allVis;
   const selFiles=files.filter(f=>selected.has(f.id));
-  const allRetryable=selFiles.length>0 && selFiles.every(f=>f.status==='failed');
+  const allRetryable=selFiles.length>0&&selFiles.every(f=>f.status==='failed');
   $('b-retry').style.display=allRetryable?'':'none';
 }
 
+// ── Row builder ───────────────────────────────────────────────────────────
 function rowActions(f){
   const a=[];
   if(f.status==='failed') a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);
-  if(f.status!=='deleted')
-    a.push(`<button class="btn s d" onclick="del('${f.id}')">Delete</button>`);
+  if(f.status!=='deleted') a.push(`<button class="btn s d" onclick="del('${f.id}')">Delete</button>`);
   return a.join('');
 }
-
-async function load(){
-  try{
-    const [s,fs]=await Promise.all([
-      fetch('/status').then(r=>r.json()),
-      fetch('/files?'+(F?`status=${F}&`:'')+(S?`search=${encodeURIComponent(S)}`:'')).then(r=>r.json())
-    ]);
-    $('c-total').textContent=s.total;
-    $('c-queued').textContent=s.queued;
-    $('c-processing').textContent=s.processing;
-    $('c-done').textContent=s.done;
-    $('c-failed').textContent=s.failed;
-    $('c-duplicates').textContent=s.duplicates;
-    $('c-unsupported').textContent=s.unsupported;
-    files=fs;
-    $('empty').style.display=fs.length?'none':'block';
-    $('rows').innerHTML=fs.map(f=>`
-      <tr data-id="${f.id}" class="${selected.has(f.id)?'sel':''}">
-        <td><input type="checkbox" ${selected.has(f.id)?'checked':''} onchange="tog('${f.id}',this.checked)"></td>
-        <td><div class="fn" title="${esc(f.filename)}">${esc(f.filename)}</div></td>
-        <td><span class="badge ${f.status}">${f.status}</span></td>
-        <td class="muted">${f.qdrant_chunk_count??'—'}</td>
-        <td class="muted">${sz(f.file_size_bytes)}</td>
-        <td class="dim">${dt(f.ingested_at||f.created_at)}</td>
-        <td><div class="actions">${rowActions(f)}</div></td>
-      </tr>`).join('');
-    renderBulk();
-  }catch(e){console.error('load failed',e);}
+function makeRow(f){
+  const tr=document.createElement('tr');
+  tr.dataset.id=f.id;
+  if(selected.has(f.id)) tr.classList.add('sel');
+  tr.innerHTML=
+    `<td><input type="checkbox"${selected.has(f.id)?' checked':''} onchange="tog('${f.id}',this.checked)"></td>`+
+    `<td><div class="fn" title="${esc(f.filename)}">${esc(f.filename)}</div></td>`+
+    `<td><span class="badge ${f.status}">${f.status}</span></td>`+
+    `<td class="muted">${f.qdrant_chunk_count??'—'}</td>`+
+    `<td class="muted">${sz(f.file_size_bytes)}</td>`+
+    `<td class="dim">${dt(f.ingested_at||f.created_at)}</td>`+
+    `<td><div class="actions">${rowActions(f)}</div></td>`;
+  return tr;
 }
 
+// ── Counts + purge button visibility ─────────────────────────────────────
+function updateCounts(s){
+  $('c-total').textContent=s.total;
+  $('c-queued').textContent=s.queued;
+  $('c-processing').textContent=s.processing;
+  $('c-done').textContent=s.done;
+  $('c-failed').textContent=s.failed;
+  $('c-duplicates').textContent=s.duplicates;
+  $('c-unsupported').textContent=s.unsupported;
+  const show=el=>el.style.display='flex';
+  const hide=el=>el.style.display='none';
+  s.failed>0    ? show($('purge-failed')) : hide($('purge-failed'));
+  s.duplicates>0? show($('purge-dup'))    : hide($('purge-dup'));
+  s.unsupported>0?show($('purge-uns'))    : hide($('purge-uns'));
+  s.failed+s.duplicates+s.unsupported>0 ? show($('purge-all')) : hide($('purge-all'));
+}
+
+// ── Load first page + reset ───────────────────────────────────────────────
+function fileQS(offset){
+  return '/files?'+(F?`status=${encodeURIComponent(F)}&`:'')+(S?`search=${encodeURIComponent(S)}&`:'')+`offset=${offset}&limit=${PAGE}`;
+}
+function idsQS(status){
+  return '/files/ids?'+(status?`status=${encodeURIComponent(status)}&`:'')+(S?`search=${encodeURIComponent(S)}`:'' );
+}
+
+async function load(preserveSel=false){
+  pageOffset=0; hasMore=true; files=[];
+  if(!preserveSel){ selected.clear(); $('rows').classList.remove('all-sel'); }
+  $('rows').innerHTML='';
+  try{
+    const [s,batch]=await Promise.all([
+      fetch('/status').then(r=>r.json()),
+      fetch(fileQS(0)).then(r=>r.json())
+    ]);
+    updateCounts(s);
+    appendBatch(batch);
+    if(batch.length<PAGE) hasMore=false;
+    $('empty').style.display=files.length?'none':'block';
+  }catch(e){console.error('load',e);}
+}
+
+function appendBatch(batch){
+  files=[...files,...batch];
+  pageOffset+=batch.length;
+  const frag=document.createDocumentFragment();
+  batch.forEach(f=>frag.appendChild(makeRow(f)));
+  $('rows').appendChild(frag);
+  renderBulk();
+}
+
+async function loadMore(){
+  if(loadingMore||!hasMore) return;
+  loadingMore=true;
+  try{
+    const batch=await fetch(fileQS(pageOffset)).then(r=>r.json());
+    appendBatch(batch);
+    if(batch.length<PAGE) hasMore=false;
+  }catch(e){console.error('loadMore',e);}
+  finally{loadingMore=false;}
+}
+
+// IntersectionObserver — fires when sentinel div near viewport
+new IntersectionObserver(e=>{if(e[0].isIntersecting)loadMore();},{rootMargin:'400px'})
+  .observe($('sentinel'));
+
+// Status counts auto-refresh (no list reset, preserves scroll)
+async function refreshCounts(){
+  try{updateCounts(await fetch('/status').then(r=>r.json()));}catch{}
+}
+setInterval(refreshCounts,3000);
+
+// ── Selection ─────────────────────────────────────────────────────────────
 function tog(id,on){on?selected.add(id):selected.delete(id);renderBulk();}
 
-$('all-cb').onchange=e=>{
-  if(e.target.checked) files.forEach(f=>selected.add(f.id));
-  else files.forEach(f=>selected.delete(f.id));
-  renderBulk();
+$('all-cb').onchange=async e=>{
+  if(e.target.checked){
+    files.forEach(f=>selected.add(f.id));  // instant visual via all-sel CSS
+    renderBulk();
+    if(hasMore){
+      // Fetch all matching IDs in background so bulk acts on truly all files
+      try{
+        const ids=await fetch(idsQS(F)).then(r=>r.json());
+        ids.forEach(id=>selected.add(id));
+        $('sel-n').textContent=selected.size;
+      }catch(e){console.error('ids',e);}
+    }
+  } else {
+    selected.clear();
+    $('rows').classList.remove('all-sel');
+    renderBulk();
+  }
 };
 
-$('b-clear').onclick=()=>{selected.clear();renderBulk();};
+// ── Bulk actions ──────────────────────────────────────────────────────────
 $('b-retry').onclick=async()=>{
   if(!confirm(`Retry ${selected.size} file(s)?`))return;
   await fetch('/files/bulk/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
-  selected.clear(); load();
+  selected.clear();load();
 };
 $('b-del').onclick=async()=>{
-  if(!confirm(`Delete ${selected.size} file(s)? They will be removed from the knowledge base, database and disk.`)) return;
+  if(!confirm(`Delete ${selected.size} file(s)? They will be removed from the knowledge base, database and disk.`))return;
   await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
-  selected.clear(); load();
+  selected.clear();load();
 };
 
 async function del(id){
-  if(!confirm('Delete this file? It will be removed from the knowledge base, database and disk.')) return;
+  if(!confirm('Delete this file? It will be removed from the knowledge base, database and disk.'))return;
   await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
   load();
 }
 async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 
-document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
-  document.querySelectorAll('#nav button').forEach(x=>x.classList.remove('on'));
+// ── Purge helpers ─────────────────────────────────────────────────────────
+async function purgeStatus(status,label){
+  const n=parseInt($('c-'+( status==='duplicate'?'duplicates':status==='unsupported'?'unsupported':status)).textContent)||0;
+  if(!confirm(`Delete all ${n} ${label}? They will be removed from disk and database.`))return;
+  const ids=await fetch(idsQS(status)).then(r=>r.json());
+  if(!ids.length)return;
+  await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  load();
+}
+
+$('purge-failed').onclick=()=>purgeStatus('failed','failed');
+$('purge-dup').onclick=   ()=>purgeStatus('duplicate','duplicates');
+$('purge-uns').onclick=   ()=>purgeStatus('unsupported','unsupported');
+$('purge-all').onclick=async()=>{
+  const nf=parseInt($('c-failed').textContent)||0;
+  const nd=parseInt($('c-duplicates').textContent)||0;
+  const nu=parseInt($('c-unsupported').textContent)||0;
+  const total=nf+nd+nu;
+  if(!confirm(`Purge all errors? This deletes ${total} file(s) (${nf} failed, ${nd} duplicates, ${nu} unsupported) from disk and database.`))return;
+  const [fi,di,ui]=await Promise.all([
+    fetch(idsQS('failed')).then(r=>r.json()),
+    fetch(idsQS('duplicate')).then(r=>r.json()),
+    fetch(idsQS('unsupported')).then(r=>r.json()),
+  ]);
+  const ids=[...fi,...di,...ui];
+  if(!ids.length)return;
+  await fetch('/files/bulk/delete?delete_physical=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+  load();
+};
+
+// ── Nav filter ────────────────────────────────────────────────────────────
+document.querySelectorAll('#nav button[data-f]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#nav button[data-f]').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); F=b.dataset.f; selected.clear(); load();
 });
 
 let t;
 $('q').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{S=e.target.value;load()},250)};
 
-load(); setInterval(load,2500);
-
-// ── live rates from event stream ──
-const inEvents=[], outEvents=[];
-const SPARK_BUCKETS=20, SPARK_WINDOW_MS=60_000;
-
-function buildSpark(id){
-  const el=$(id);
-  for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}
-}
-buildSpark('spark-in'); buildSpark('spark-out');
-
+// ── Live rates ────────────────────────────────────────────────────────────
+const inEvents=[],outEvents=[];
+const SPARK_BUCKETS=20,SPARK_WINDOW_MS=60_000;
+function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
+buildSpark('spark-in');buildSpark('spark-out');
 function trackEvent(msg){
   const now=Date.now();
   if(/^Queued:/.test(msg)) inEvents.push(now);
-  else if(/^Done:/.test(msg)) outEvents.push(now);
-  // failed counts as completion too
-  else if(/^Failed:/.test(msg)) outEvents.push(now);
+  else if(/^Done:/.test(msg)||/^Failed:/.test(msg)) outEvents.push(now);
 }
-
-function trim(arr){
-  const cutoff=Date.now()-SPARK_WINDOW_MS;
-  while(arr.length && arr[0]<cutoff) arr.shift();
-}
-
+function trimArr(a){const c=Date.now()-SPARK_WINDOW_MS;while(a.length&&a[0]<c)a.shift();}
 function paintSpark(id,arr){
-  trim(arr);
-  const el=$(id), now=Date.now();
-  const bucketSize=SPARK_WINDOW_MS/SPARK_BUCKETS;
+  trimArr(arr);const el=$(id),now=Date.now(),bs=SPARK_WINDOW_MS/SPARK_BUCKETS;
   const counts=new Array(SPARK_BUCKETS).fill(0);
-  arr.forEach(t=>{
-    const idx=Math.min(SPARK_BUCKETS-1, Math.floor((t-(now-SPARK_WINDOW_MS))/bucketSize));
-    counts[idx]++;
-  });
+  arr.forEach(t=>{counts[Math.min(SPARK_BUCKETS-1,Math.floor((t-(now-SPARK_WINDOW_MS))/bs))]++;});
   const max=Math.max(2,...counts);
-  el.querySelectorAll('span').forEach((s,i)=>{
-    const h=Math.max(2, Math.round((counts[i]/max)*16));
-    s.style.height=h+'px';
-    s.classList.toggle('hot', counts[i]>0);
-  });
+  el.querySelectorAll('span').forEach((s,i)=>{s.style.height=Math.max(2,Math.round((counts[i]/max)*16))+'px';s.classList.toggle('hot',counts[i]>0);});
 }
-
 function updateRates(){
-  trim(inEvents); trim(outEvents);
-  const inRate=(inEvents.length/(SPARK_WINDOW_MS/1000)).toFixed(1);
-  const outRate=(outEvents.length/(SPARK_WINDOW_MS/1000)).toFixed(1);
-  $('r-in').textContent=inRate;
-  $('r-out').textContent=outRate;
+  trimArr(inEvents);trimArr(outEvents);
+  $('r-in').textContent=(inEvents.length/(SPARK_WINDOW_MS/1000)).toFixed(1);
+  $('r-out').textContent=(outEvents.length/(SPARK_WINDOW_MS/1000)).toFixed(1);
   $('r-min-in').textContent=inEvents.length;
   $('r-min-out').textContent=outEvents.length;
   $('r-act').textContent=$('c-processing').textContent;
-  paintSpark('spark-in', inEvents);
-  paintSpark('spark-out', outEvents);
+  paintSpark('spark-in',inEvents);paintSpark('spark-out',outEvents);
 }
-setInterval(updateRates, 1000);
+setInterval(updateRates,1000);
 
-// ── live event log via SSE ──
-const logBody=$('log-body'), logHead=$('log-head');
+// ── Live log via SSE ──────────────────────────────────────────────────────
+const logBody=$('log-body'),logHead=$('log-head');
 const MAX_LINES=300;
 let es=null;
-
-function fmtTime(iso){
-  const d=new Date(iso);
-  return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-}
+function fmtTime(iso){return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
 function appendLog(evt){
   trackEvent(evt.msg||'');
+  // Debounce list reload on file status changes
+  if(/^(Queued|Done|Failed|Duplicate|Unsupported|Processing):/.test(evt.msg||'')){
+    clearTimeout(reloadDebounce);
+    reloadDebounce=setTimeout(()=>load(true),1000);
+  }
   const atBottom=logBody.scrollHeight-logBody.scrollTop-logBody.clientHeight<20;
   const line=document.createElement('div');
   line.className='log-line '+(evt.lvl||'INFO');
   line.innerHTML=`<span class="ldot"></span><span class="ts">${fmtTime(evt.t)}</span><span class="msg">${esc(evt.msg||'')}</span>`;
   logBody.appendChild(line);
-  while(logBody.children.length>MAX_LINES) logBody.removeChild(logBody.firstChild);
-  if(atBottom) logBody.scrollTop=logBody.scrollHeight;
+  while(logBody.children.length>MAX_LINES)logBody.removeChild(logBody.firstChild);
+  if(atBottom)logBody.scrollTop=logBody.scrollHeight;
 }
 function connect(){
   if(es){try{es.close()}catch{}}
@@ -429,8 +551,9 @@ function connect(){
   es.onmessage=e=>{try{appendLog(JSON.parse(e.data))}catch{}};
 }
 connect();
-
 $('log-clear').onclick=()=>{logBody.innerHTML=''};
+
+load();
 </script>
 </body>
 </html>
