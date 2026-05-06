@@ -268,20 +268,53 @@ async def _process_file(path: Path, file_id: str):
             await db.commit()
         logger.info("Processing: %s", path.name)
 
-        # 5. Legacy format conversion (runs in thread pool)
+        # 5. Legacy format conversion (runs in thread pool).  May fail outright
+        # for some .ppt/.doc files (e.g. needs Java filters that aren't available)
+        # — in which case we skip the structured path and rely on the LibreOffice
+        # txt fallback below.
+        extracted_path = path
+        extract_ext = ext
         if ext == ".doc":
-            from app.parsers.legacy import convert
-            converted, tmpdir = await loop.run_in_executor(None, convert, path, "docx")
-            extracted_path, ext = converted, ".docx"
+            try:
+                from app.parsers.legacy import convert
+                converted, tmpdir = await loop.run_in_executor(None, convert, path, "docx")
+                extracted_path, extract_ext = converted, ".docx"
+            except Exception as e:
+                logger.info("doc→docx failed for %s — will try txt fallback: %s",
+                            path.name, str(e)[:120])
+                extracted_path = None
         elif ext == ".ppt":
-            from app.parsers.legacy import convert
-            converted, tmpdir = await loop.run_in_executor(None, convert, path, "pptx")
-            extracted_path, ext = converted, ".pptx"
-        else:
-            extracted_path = path
+            try:
+                from app.parsers.legacy import convert
+                converted, tmpdir = await loop.run_in_executor(None, convert, path, "pptx")
+                extracted_path, extract_ext = converted, ".pptx"
+            except Exception as e:
+                logger.info("ppt→pptx failed for %s — will try txt fallback: %s",
+                            path.name, str(e)[:120])
+                extracted_path = None
 
-        # 6. Extract text in thread pool
-        text = await loop.run_in_executor(None, _extract_text, extracted_path, ext)
+        # 6. Extract text — primary structured path
+        text = ""
+        if extracted_path is not None:
+            try:
+                text = await loop.run_in_executor(None, _extract_text, extracted_path, extract_ext)
+            except Exception as e:
+                logger.info("Structured extract failed for %s — will try txt fallback: %s",
+                            path.name, str(e)[:120])
+
+        # 6b. LibreOffice txt fallback — catches text in shapes / text boxes
+        # that python-docx and python-pptx silently skip, and rescues files
+        # whose structured conversion errored above.
+        if not text.strip() and ext in {".doc", ".docx", ".ppt", ".pptx", ".pptm",
+                                         ".docm", ".dotm", ".ppsx", ".xls", ".xlsx", ".xlsm"}:
+            from app.parsers.legacy import convert_to_text
+            try:
+                text = await loop.run_in_executor(None, convert_to_text, path)
+                if text.strip():
+                    logger.info("Used txt fallback for %s (%d chars)", path.name, len(text))
+            except Exception as e:
+                logger.warning("txt fallback failed for %s: %s", path.name, str(e)[:200])
+
         if not text.strip():
             raise ValueError("No text extracted")
 

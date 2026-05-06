@@ -2,6 +2,7 @@ FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-nogui \
+    default-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
