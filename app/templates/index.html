@@ -303,7 +303,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       <span class="l">ETA</span>
     </div>
     <div class="rate tput">
-      Last min · <b id="r-min-in">0</b> up · <b id="r-min-out">0</b> done
+      Session · <b id="r-min-in">0</b> up · <b id="r-min-out">0</b> done
     </div>
   </div>
 
@@ -664,21 +664,41 @@ document.querySelectorAll('#nav button[data-f]').forEach(b=>b.onclick=()=>{
 let t;
 $('q').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{S=e.target.value;load()},250)};
 
-// ── Live rates ────────────────────────────────────────────────────────────
+// ── Live rates (exponential decay, no sliding window) ────────────────────
+// Each event contributes exp(-Δt / TAU) to the rate. tau≈3s gives a half-life
+// of ~2s — when uploads stop, the displayed rate drops near-zero in 6–8s
+// instead of taking a full minute to drain a 60s window.
+const TAU=3;                        // seconds — decay constant for the live rate
+const SPARK_BUCKETS=20;
+const SPARK_WINDOW_MS=20_000;       // visual-only history for the sparkline
 const inEvents=[],outEvents=[];
-const SPARK_BUCKETS=20,SPARK_WINDOW_MS=60_000;
+let totalIn=0,totalOut=0;           // session counters (replaces "Last min")
+
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
 buildSpark('spark-in');buildSpark('spark-out');
 function trackEvent(msg){
   const now=Date.now();
-  if(/^Queued:/.test(msg)) inEvents.push(now);
-  else if(/^Done:/.test(msg)||/^Failed:/.test(msg)) outEvents.push(now);
+  if(/^Queued:/.test(msg)){inEvents.push(now);totalIn++;}
+  else if(/^Done:/.test(msg)||/^Failed:/.test(msg)){outEvents.push(now);totalOut++;}
 }
-function trimArr(a){const c=Date.now()-SPARK_WINDOW_MS;while(a.length&&a[0]<c)a.shift();}
+// Drop very old events (well past meaningful weight) to keep arrays bounded.
+function prune(a){const c=Date.now()-Math.max(SPARK_WINDOW_MS,TAU*1000*8);while(a.length&&a[0]<c)a.shift();}
+function liveRate(arr){
+  const now=Date.now();let s=0;
+  for(let i=arr.length-1;i>=0;i--){
+    const dt=(now-arr[i])/1000;
+    if(dt>TAU*8)break;             // negligible weight — array is time-ordered
+    s+=Math.exp(-dt/TAU);
+  }
+  return s/TAU;                    // events per second
+}
 function paintSpark(id,arr){
-  trimArr(arr);const el=$(id),now=Date.now(),bs=SPARK_WINDOW_MS/SPARK_BUCKETS;
+  const el=$(id),now=Date.now(),bs=SPARK_WINDOW_MS/SPARK_BUCKETS;
   const counts=new Array(SPARK_BUCKETS).fill(0);
-  arr.forEach(t=>{counts[Math.min(SPARK_BUCKETS-1,Math.floor((t-(now-SPARK_WINDOW_MS))/bs))]++;});
+  for(const t of arr){
+    const dt=now-t;
+    if(dt<SPARK_WINDOW_MS) counts[Math.min(SPARK_BUCKETS-1,Math.floor((SPARK_WINDOW_MS-dt)/bs))]++;
+  }
   const max=Math.max(2,...counts);
   el.querySelectorAll('span').forEach((s,i)=>{s.style.height=Math.max(2,Math.round((counts[i]/max)*16))+'px';s.classList.toggle('hot',counts[i]>0);});
 }
@@ -690,19 +710,28 @@ function fmtETA(sec){
   return h+'h'+(m?' '+m+'m':'');
 }
 function updateRates(){
-  trimArr(inEvents);trimArr(outEvents);
-  const rIn=inEvents.length/(SPARK_WINDOW_MS/1000);
-  const rOut=outEvents.length/(SPARK_WINDOW_MS/1000);
+  prune(inEvents);prune(outEvents);
+  const rIn=liveRate(inEvents);
+  const rOut=liveRate(outEvents);
   $('r-in').textContent=rIn.toFixed(1);
   $('r-out').textContent=rOut.toFixed(1);
-  $('r-min-in').textContent=inEvents.length;
-  $('r-min-out').textContent=outEvents.length;
-  // ETA = (queued + processing) / completion-rate
+  $('r-min-in').textContent=totalIn;
+  $('r-min-out').textContent=totalOut;
   const remaining=(parseInt($('c-queued').textContent)||0)+(parseInt($('c-processing').textContent)||0);
-  $('r-eta').textContent=remaining>0&&rOut>0.05?fmtETA(remaining/rOut):(remaining>0?'…':'—');
+  // Hide ETA while uploads are still arriving — the calculation is unstable
+  // because the backlog is growing while throughput is still ramping up.
+  if(remaining<=0){
+    $('r-eta').textContent='—';
+  } else if(rIn>0.3){
+    $('r-eta').textContent='uploading';
+  } else if(rOut>0.05){
+    $('r-eta').textContent=fmtETA(remaining/rOut);
+  } else {
+    $('r-eta').textContent='…';
+  }
   paintSpark('spark-in',inEvents);paintSpark('spark-out',outEvents);
 }
-setInterval(updateRates,1000);
+setInterval(updateRates,500);      // 2 Hz refresh — feels live
 
 // ── Live log via SSE ──────────────────────────────────────────────────────
 const logBody=$('log-body'),logHead=$('log-head');

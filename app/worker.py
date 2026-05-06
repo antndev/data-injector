@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,16 @@ from app.watcher import SUPPORTED
 logger = logging.getLogger(__name__)
 
 UNSUPPORTED_EXTS = {".strings", ".nib", ".icns", ".plist"}
+
+# Strip control characters that some embed models (notably bge-m3 via Ollama)
+# choke on and return NaN for. PPTX slide-marker chunks like "--- Slide 5 ---"
+# combined with stray control chars are the usual culprits.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_MIN_CHUNK_CHARS = 3
+
+
+def _clean_chunk(s: str) -> str:
+    return _CONTROL_CHARS.sub("", s).strip()
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=settings.chunk_size,
@@ -281,7 +292,7 @@ async def _process_file(path: Path, file_id: str):
 
         # 8. Embed, upsert to Qdrant, and register in OpenWebUI
         # Delete stale data first, then embed, then upsert+register in parallel.
-        await _embed_and_upload(file_id, proc_path.name, chunks, file_hash, proc_path.stat().st_size)
+        stored = await _embed_and_upload(file_id, proc_path.name, chunks, file_hash, proc_path.stat().st_size)
 
         # 9. Move to done
         if proc_path.exists():
@@ -290,10 +301,10 @@ async def _process_file(path: Path, file_id: str):
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status='done', qdrant_collection=?, qdrant_chunk_count=?, ingested_at=? WHERE id=?",
-                (settings.qdrant_collection, len(chunks), datetime.now(timezone.utc).isoformat(), file_id),
+                (settings.qdrant_collection, stored, datetime.now(timezone.utc).isoformat(), file_id),
             )
             await db.commit()
-        logger.info("Done: %s (%d chunks)", proc_path.name, len(chunks))
+        logger.info("Done: %s (%d chunks)", proc_path.name, stored)
 
     except Exception as exc:
         # Check whether the file still exists in the DB.  If it doesn't, the user
@@ -367,7 +378,8 @@ def _extract_text(path: Path, ext: str) -> str:
 async def _embed_and_upload(
     file_id: str, filename: str, chunks: list[str],
     file_hash: str, file_size: int,
-):
+) -> int:
+    """Returns the number of chunks actually embedded + stored."""
     """
     Full pipeline: delete stale data → embed → upsert + register in parallel.
 
@@ -398,41 +410,74 @@ async def _embed_and_upload(
 
     await asyncio.gather(_del_qdrant(), _del_owui())
 
-    # ── 2. Embed all batches concurrently ──────────────────────────────────
+    # ── 2. Clean + filter chunks, then embed all batches concurrently ─────
+    # Drop empty / control-char-only / too-short chunks so Ollama doesn't
+    # produce NaN embeddings (which then 500 the entire batch).
+    chunks = [_clean_chunk(c) for c in chunks]
+    chunks = [c for c in chunks if len(c) >= _MIN_CHUNK_CHARS]
+    if not chunks:
+        raise ValueError("No usable chunks after cleaning (all whitespace / control chars)")
+
     now = datetime.now(timezone.utc).isoformat()
     batch_size = settings.embedding_batch_size
     batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
 
     embed_sem = asyncio.Semaphore(settings.embed_concurrency)
 
-    async def _embed_one(batch: list[str]) -> list:
+    async def _embed_one(batch: list[str]) -> list[tuple[str, list]]:
+        """
+        Return list of (chunk, embedding) pairs. On batch failure (e.g. Ollama
+        500 NaN), fall back to per-chunk embedding and silently drop chunks
+        that still error so the file as a whole still succeeds.
+        """
         async with embed_sem:
-            resp = await ollama.embed(model=settings.embedding_model, input=batch)
-            return resp.embeddings
-
-    all_embeddings = await asyncio.gather(*[_embed_one(b) for b in batches])
-
-    points: list[PointStruct] = []
-    for bi, (batch, embeddings) in enumerate(zip(batches, all_embeddings)):
-        base = bi * batch_size
-        for j, vec in enumerate(embeddings):
-            points.append(
-                PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=vec,
-                    payload={
-                        "text": batch[j],
-                        "metadata": {
-                            "knowledge_base_id": settings.qdrant_knowledge_base_id,
-                            "source_file": filename,
-                            "file_id": file_id,
-                            "chunk_index": base + j,
-                            "ingested_at": now,
-                        },
-                        "tenant_id": settings.qdrant_knowledge_base_id,
-                    },
+            try:
+                resp = await ollama.embed(model=settings.embedding_model, input=batch)
+                return list(zip(batch, resp.embeddings))
+            except Exception as e:
+                emsg = str(e)
+                if not ("NaN" in emsg or "500" in emsg or "unsupported" in emsg.lower()):
+                    raise
+                logger.warning(
+                    "Embed batch failed for %s (%s) — falling back to per-chunk",
+                    filename, emsg[:120],
                 )
-            )
+                pairs: list[tuple[str, list]] = []
+                for c in batch:
+                    try:
+                        r = await ollama.embed(model=settings.embedding_model, input=[c])
+                        pairs.append((c, r.embeddings[0]))
+                    except Exception as e2:
+                        logger.warning(
+                            "Skipping unembeddable chunk in %s: %s | %r",
+                            filename, str(e2)[:80], c[:60].replace("\n", " "),
+                        )
+                return pairs
+
+    batch_results = await asyncio.gather(*[_embed_one(b) for b in batches])
+    all_pairs: list[tuple[str, list]] = [p for batch in batch_results for p in batch]
+
+    if not all_pairs:
+        raise ValueError("All chunks failed to embed (likely all NaN)")
+
+    points: list[PointStruct] = [
+        PointStruct(
+            id=str(uuid.uuid4()),
+            vector=vec,
+            payload={
+                "text": chunk,
+                "metadata": {
+                    "knowledge_base_id": settings.qdrant_knowledge_base_id,
+                    "source_file": filename,
+                    "file_id": file_id,
+                    "chunk_index": idx,
+                    "ingested_at": now,
+                },
+                "tenant_id": settings.qdrant_knowledge_base_id,
+            },
+        )
+        for idx, (chunk, vec) in enumerate(all_pairs)
+    ]
 
     # ── 3. Upsert to Qdrant + register in OpenWebUI in parallel ───────────
     upsert_size = 256
@@ -455,6 +500,8 @@ async def _embed_and_upload(
         _do_upsert(),
         _register_openwebui_file(file_id, filename, file_hash, file_size),
     )
+
+    return len(points)
 
 
 async def _qdrant_delete(qdrant: AsyncQdrantClient, file_id: str, filename: str):
