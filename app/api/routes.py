@@ -22,41 +22,32 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 audit = logging.getLogger("audit")
 
-# ---------------------------------------------------------------------------
-# Rate limiting: track failed attempts per IP.
-# After MAX_ATTEMPTS failures in the window, lock out for LOCKOUT_SECONDS.
-# ---------------------------------------------------------------------------
 _MAX_ATTEMPTS = 5
-_LOCKOUT_SECONDS = 300  # 5 minutes
+_LOCKOUT_SECONDS = 300
 
 # IP → (failure_count, locked_until_timestamp)
 _rate: dict[str, tuple[int, float]] = defaultdict(lambda: (0, 0.0))
 
 
 def _is_locked(ip: str) -> tuple[bool, int]:
-    """Returns (locked, seconds_remaining)."""
     _, locked_until = _rate[ip]
     remaining = int(locked_until - time.time())
     return remaining > 0, max(remaining, 0)
 
 
-def _record_failure(ip: str) -> None:
+def _record_failure(ip: str) -> int:
+    """Record a failed attempt. Returns attempt count; 0 means just locked."""
     count, locked_until = _rate[ip]
     count += 1
     if count >= _MAX_ATTEMPTS:
-        audit.warning("rate-limit: %s locked out after %d failures", ip, count)
         _rate[ip] = (0, time.time() + _LOCKOUT_SECONDS)
-    else:
-        _rate[ip] = (count, locked_until)
+        return _MAX_ATTEMPTS
+    _rate[ip] = (count, locked_until)
+    return count
 
 
 def _reset(ip: str) -> None:
     _rate[ip] = (0, 0.0)
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -87,11 +78,8 @@ async def login(request: Request, password: str = Form(...)):
         audit.info("login-success from %s", ip)
         return RedirectResponse("/", status_code=303)
 
-    _record_failure(ip)
-    _, locked_until = _rate[ip]
-    now_locked = locked_until > time.time()
-    audit.warning("login-failure from %s (attempt %d/%d)",
-                  ip, _rate[ip][0] if not now_locked else _MAX_ATTEMPTS, _MAX_ATTEMPTS)
+    count = _record_failure(ip)
+    audit.warning("login-failure from %s (attempt %d/%d)", ip, count, _MAX_ATTEMPTS)
     return RedirectResponse("/login?error=1", status_code=303)
 
 
@@ -103,9 +91,6 @@ async def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-# ---------------------------------------------------------------------------
-# Live event stream (SSE)
-# ---------------------------------------------------------------------------
 
 @router.get("/events")
 async def event_stream():
