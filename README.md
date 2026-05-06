@@ -39,11 +39,13 @@ EMBEDDING_DIMENSIONS=768
 # OpenWebUI
 OPENWEBUI_USER_ID=               # your user ID from the OpenWebUI database
 
-# Dashboard login
-ADMIN_PIN=1234
+# Dashboard login — any characters, no default (app won't start without this)
+ADMIN_PASSWORD=your-strong-password
 ```
 
-The dashboard runs on port 8000. Open it in a browser and enter the PIN.
+The dashboard runs on port 8000. Open it in a browser and enter the password.
+
+After 5 wrong attempts the login is locked for 5 minutes. Audit logs land in `/db/logs/auth.log` and are rotated daily, kept for 30 days.
 
 ## Supported file types
 

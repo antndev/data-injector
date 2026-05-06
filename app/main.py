@@ -1,10 +1,11 @@
 import asyncio
 import logging
 import secrets
+from logging.handlers import TimedRotatingFileHandler
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse, JSONResponse
-from contextlib import asynccontextmanager
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import events
@@ -21,8 +22,6 @@ logging.basicConfig(
 
 
 def _session_secret() -> str:
-    """Load a persisted session secret, or generate one and store it.
-    Lives next to the DB so logins survive restarts without needing env config."""
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
     secret_file = settings.db_path.parent / ".session_secret"
     if secret_file.exists():
@@ -36,9 +35,50 @@ def _session_secret() -> str:
     return secret
 
 
+def _setup_audit_log() -> logging.Logger:
+    settings.log_dir.mkdir(parents=True, exist_ok=True)
+    audit = logging.getLogger("audit")
+    audit.setLevel(logging.INFO)
+    audit.propagate = False
+    if audit.handlers:
+        return audit
+    handler = TimedRotatingFileHandler(
+        filename=str(settings.log_dir / "auth.log"),
+        when="midnight",
+        interval=1,
+        backupCount=settings.auth_log_retention_days,
+        encoding="utf-8",
+        utc=True,
+    )
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s  %(levelname)-7s  %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%SZ",
+    ))
+    audit.addHandler(handler)
+    return audit
+
+
+def _check_log_size() -> None:
+    if not settings.log_dir.exists():
+        return
+    total = sum(f.stat().st_size for f in settings.log_dir.rglob("*") if f.is_file())
+    limit = settings.auth_log_max_total_mb * 1024 * 1024
+    if total > limit:
+        logging.warning(
+            "Audit log dir exceeds %.0f MB (%.1f MB used) — consider pruning",
+            settings.auth_log_max_total_mb, total / 1024 / 1024,
+        )
+
+
+audit = _setup_audit_log()
+
+PUBLIC_PATHS = {"/login", "/logout", "/health"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.create_dirs()
+    _check_log_size()
     await init_db()
 
     loop = asyncio.get_running_loop()
@@ -62,10 +102,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="data-ingestor", lifespan=lifespan)
 
-PUBLIC_PATHS = {"/login", "/logout", "/health"}
 
-
-# Registered FIRST → runs INSIDE SessionMiddleware (so request.session is populated).
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -73,19 +110,20 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if request.session.get("authed"):
         return await call_next(request)
+    audit.warning("unauth: %s %s from %s", request.method, path,
+                  request.client.host if request.client else "?")
     if path == "/" or request.headers.get("accept", "").startswith("text/html"):
         return RedirectResponse("/login", status_code=303)
     return JSONResponse({"detail": "auth required"}, status_code=401)
 
 
-# Registered LAST → wraps everything → runs first on the request, populates session.
 app.add_middleware(
     SessionMiddleware,
     secret_key=_session_secret(),
     session_cookie="ingestor_session",
-    same_site="lax",
-    https_only=False,
-    max_age=60 * 60 * 24 * 7,  # 1 week
+    same_site="strict",
+    https_only=True,   # Caddy handles TLS — never expose this container directly
+    max_age=60 * 60 * 8,  # 8 hours
 )
 
 app.include_router(router)

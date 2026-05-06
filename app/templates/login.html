@@ -9,7 +9,7 @@
 :root{
   --bg:#0a0a0a; --panel:#161616; --line:#262626;
   --text:#f1f1f1; --mute:#aaa; --dim:#666;
-  --blue:#3ea6ff; --red:#f28b82;
+  --blue:#3ea6ff; --red:#f28b82; --orange:#ffb74d;
 }
 html,body{height:100%}
 body{
@@ -18,7 +18,6 @@ body{
   display:grid;place-items:center;
   position:relative;overflow:hidden;
 }
-/* subtle background grid */
 body::before{
   content:'';position:absolute;inset:0;
   background-image:
@@ -66,14 +65,12 @@ h1{font-size:18px;font-weight:600;text-align:center;letter-spacing:-.01em}
   background:#0a0a0a;
   border:1px solid var(--line);
   border-radius:8px;
-  padding:14px 16px;
+  padding:12px 16px;
   color:var(--text);
-  font:500 18px/1 Inter,sans-serif;
-  letter-spacing:.45em;
-  text-align:center;
+  font:500 15px/1 Inter,sans-serif;
   transition:border-color .15s, background .15s;
 }
-.field input::placeholder{letter-spacing:.05em;font-weight:400;color:var(--dim)}
+.field input::placeholder{font-weight:400;color:var(--dim)}
 .field input:focus{outline:0;border-color:var(--blue);background:#0e0e0e}
 .field input:focus + .glow{opacity:1}
 .glow{
@@ -93,15 +90,24 @@ button[type=submit]{
 }
 button[type=submit]:hover{background:#5fb6ff}
 button[type=submit]:active{transform:translateY(1px)}
+button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed}
 
 .err{
   margin-top:14px;
+  border-radius:7px;
+  font-size:13px;text-align:center;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  padding:9px 12px;
+}
+.err.red{
   background:rgba(242,139,130,.08);
   border:1px solid rgba(242,139,130,.2);
   color:var(--red);
-  padding:9px 12px;border-radius:7px;
-  font-size:13px;text-align:center;
-  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.err.orange{
+  background:rgba(255,183,77,.08);
+  border:1px solid rgba(255,183,77,.2);
+  color:var(--orange);
 }
 .err svg{width:14px;height:14px;flex-shrink:0}
 
@@ -120,29 +126,58 @@ button[type=submit]:active{transform:translateY(1px)}
 </style>
 </head>
 <body>
-<form class="card{% if error %} shake{% endif %}" method="post" action="/login" autocomplete="off">
+{% set locked = error == "locked" %}
+<form class="card{% if error and not locked %} shake{% endif %}"
+      method="post" action="/login" autocomplete="off">
   <div class="icon">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
       <rect x="3" y="11" width="18" height="11" rx="2"/>
       <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
     </svg>
   </div>
   <h1>Authentication</h1>
-  <div class="sub">Enter your access PIN to continue</div>
+  <div class="sub">Enter your password to continue</div>
 
   <div class="field">
-    <input type="password" name="pin" inputmode="numeric"
-           autocomplete="off" autofocus maxlength="32" placeholder="• • • •">
+    <input type="password" name="password"
+           autocomplete="current-password" autofocus
+           placeholder="Password"
+           {% if locked %}disabled{% endif %}>
     <span class="glow"></span>
   </div>
 
-  <button type="submit">Sign in</button>
+  <button type="submit" {% if locked %}disabled{% endif %}>Sign in</button>
 
-  {% if error %}
-  <div class="err">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    Invalid PIN. Try again.
+  {% if error == "1" %}
+  <div class="err red">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
+      <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    Incorrect password. Try again.
   </div>
+  {% elif locked %}
+  <div class="err orange">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="8" x2="12" y2="13"/>
+      <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+    Too many attempts — try again in
+    <span id="cd">{{ request.query_params.get('wait', '300') }}s</span>
+  </div>
+  <script>
+    const el = document.getElementById('cd');
+    let s = parseInt(el.textContent);
+    const t = setInterval(() => {
+      s--;
+      if (s <= 0) { clearInterval(t); location.href='/login'; return; }
+      el.textContent = s + 's';
+    }, 1000);
+  </script>
   {% endif %}
 
   <div class="foot"><span class="dot"></span>data ingestor</div>

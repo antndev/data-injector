@@ -1,6 +1,10 @@
 import json
+import secrets
 import shutil
 import asyncio
+import logging
+import time
+from collections import defaultdict
 from pathlib import Path
 
 import aiosqlite
@@ -16,32 +20,85 @@ from app.worker import _qdrant_client, _qdrant_delete, trigger_scan
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+audit = logging.getLogger("audit")
 
+# ---------------------------------------------------------------------------
+# Rate limiting: track failed attempts per IP.
+# After MAX_ATTEMPTS failures in the window, lock out for LOCKOUT_SECONDS.
+# ---------------------------------------------------------------------------
+_MAX_ATTEMPTS = 5
+_LOCKOUT_SECONDS = 300  # 5 minutes
+
+# IP → (failure_count, locked_until_timestamp)
+_rate: dict[str, tuple[int, float]] = defaultdict(lambda: (0, 0.0))
+
+
+def _is_locked(ip: str) -> tuple[bool, int]:
+    """Returns (locked, seconds_remaining)."""
+    _, locked_until = _rate[ip]
+    remaining = int(locked_until - time.time())
+    return remaining > 0, max(remaining, 0)
+
+
+def _record_failure(ip: str) -> None:
+    count, locked_until = _rate[ip]
+    count += 1
+    if count >= _MAX_ATTEMPTS:
+        audit.warning("rate-limit: %s locked out after %d failures", ip, count)
+        _rate[ip] = (0, time.time() + _LOCKOUT_SECONDS)
+    else:
+        _rate[ip] = (count, locked_until)
+
+
+def _reset(ip: str) -> None:
+    _rate[ip] = (0, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
 
 
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
-
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str | None = None):
-    return templates.TemplateResponse(request=request, name="login.html", context={"error": error})
+    return templates.TemplateResponse(
+        request=request, name="login.html", context={"error": error}
+    )
 
 
 @router.post("/login")
-async def login(request: Request, pin: str = Form(...)):
-    if pin == settings.admin_pin:
+async def login(request: Request, password: str = Form(...)):
+    ip = request.client.host if request.client else "?"
+
+    locked, remaining = _is_locked(ip)
+    if locked:
+        audit.warning("login-blocked: %s (locked %ds remaining)", ip, remaining)
+        return RedirectResponse(f"/login?error=locked&wait={remaining}", status_code=303)
+
+    # compare_digest prevents timing attacks
+    if secrets.compare_digest(password, settings.admin_password):
+        _reset(ip)
         request.session["authed"] = True
+        request.session["login_time"] = int(time.time())
+        audit.info("login-success from %s", ip)
         return RedirectResponse("/", status_code=303)
+
+    _record_failure(ip)
+    _, locked_until = _rate[ip]
+    now_locked = locked_until > time.time()
+    audit.warning("login-failure from %s (attempt %d/%d)",
+                  ip, _rate[ip][0] if not now_locked else _MAX_ATTEMPTS, _MAX_ATTEMPTS)
     return RedirectResponse("/login?error=1", status_code=303)
 
 
 @router.post("/logout")
 async def logout(request: Request):
+    ip = request.client.host if request.client else "?"
+    audit.info("logout from %s", ip)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 

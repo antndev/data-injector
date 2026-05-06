@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     duplicates_dir: Path = Path("/data/duplicates")
     unsupported_dir: Path = Path("/data/unsupported")
     db_path: Path = Path("/db/ingestor.db")
+    log_dir: Path = Path("/db/logs")
 
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
@@ -23,15 +24,20 @@ class Settings(BaseSettings):
 
     chunk_size: int = 512
     chunk_overlap: int = 50
-    worker_concurrency: int = 64       # parallel files in flight
-    embedding_batch_size: int = 128    # chunks per Ollama embed request
-    embed_concurrency: int = 8         # parallel embed batches per file
-    upsert_concurrency: int = 4        # parallel Qdrant upsert batches per file
-    stability_wait_s: int = 2          # seconds to wait before processing inbox files
+    worker_concurrency: int = 64
+    embedding_batch_size: int = 128
+    embed_concurrency: int = 8
+    upsert_concurrency: int = 4
+    stability_wait_s: int = 2
 
     openwebui_user_id: str
 
-    admin_pin: str = "1234"
+    # Dashboard password — any characters, min 8. No default forces explicit config.
+    admin_password: str
+
+    # Audit log settings
+    auth_log_retention_days: int = 30
+    auth_log_max_total_mb: int = 100
 
     class Config:
         env_file = ".env"
@@ -40,6 +46,7 @@ class Settings(BaseSettings):
         for d in [
             self.inbox_dir, self.processing_dir, self.done_dir,
             self.failed_dir, self.duplicates_dir, self.unsupported_dir,
+            self.log_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
