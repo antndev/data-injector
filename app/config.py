@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     failed_dir: Path = Path("/data/failed")
     duplicates_dir: Path = Path("/data/duplicates")
     unsupported_dir: Path = Path("/data/unsupported")
+    uploads_tmp_dir: Path = Path("/data/_uploads")  # in-flight uploads, atomically renamed into inbox
     db_path: Path = Path("/db/ingestor.db")
     log_dir: Path = Path("/db/logs")
 
@@ -46,7 +47,7 @@ class Settings(BaseSettings):
         for d in [
             self.inbox_dir, self.processing_dir, self.done_dir,
             self.failed_dir, self.duplicates_dir, self.unsupported_dir,
-            self.log_dir,
+            self.uploads_tmp_dir, self.log_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,9 +1,11 @@
 import json
+import os
 import secrets
 import shutil
 import asyncio
 import logging
 import time
+import uuid
 from collections import defaultdict
 from pathlib import Path
 
@@ -349,25 +351,42 @@ def _safe_filename(raw: str | None) -> str:
 
 @router.post("/upload")
 async def upload_files(files: list[UploadFile] = File(...)):
+    """
+    Streams each upload to a staging dir, then atomically renames into the
+    inbox once the full body has been received. The watcher only ever sees
+    complete files, so a force-refresh / dropped connection mid-upload leaves
+    nothing for the worker to pick up.
+    """
     if not files:
         raise HTTPException(400, "No files provided")
+    settings.uploads_tmp_dir.mkdir(parents=True, exist_ok=True)
     queued: list[str] = []
-    for upload in files:
-        name = _safe_filename(upload.filename)
-        dest = settings.inbox_dir / name
-        counter = 1
-        while dest.exists():
-            dest = settings.inbox_dir / f"{Path(name).stem}_{counter}{Path(name).suffix}"
-            counter += 1
-        try:
-            with dest.open("wb") as fh:
-                while chunk := await upload.read(_UPLOAD_CHUNK):
-                    fh.write(chunk)
-        except Exception as exc:
-            dest.unlink(missing_ok=True)
-            raise HTTPException(500, f"Failed to write {name}: {exc}") from exc
-        finally:
-            await upload.close()
-        queued.append(dest.name)
+    pending: list[Path] = []  # staging files for the in-flight request
+    try:
+        for upload in files:
+            name = _safe_filename(upload.filename)
+            tmp = settings.uploads_tmp_dir / f"{uuid.uuid4().hex}.{name}.part"
+            pending.append(tmp)
+            try:
+                with tmp.open("wb") as fh:
+                    while chunk := await upload.read(_UPLOAD_CHUNK):
+                        fh.write(chunk)
+            finally:
+                await upload.close()
+
+            dest = settings.inbox_dir / name
+            counter = 1
+            while dest.exists():
+                dest = settings.inbox_dir / f"{Path(name).stem}_{counter}{Path(name).suffix}"
+                counter += 1
+            os.replace(tmp, dest)  # atomic on the same filesystem
+            queued.append(dest.name)
+    except Exception as exc:
+        # Client disconnect or write failure — wipe any staged remains.
+        for p in pending:
+            p.unlink(missing_ok=True)
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(500, f"Upload failed: {exc}") from exc
     trigger_scan()
     return {"ok": True, "queued": queued}
