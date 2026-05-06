@@ -66,6 +66,7 @@ class _Handler(logging.Handler):
 def install_log_handler():
     h = _Handler()
     h.setLevel(logging.INFO)
-    # capture from our own modules only — skip noisy libs
-    for name in ("app", "app.worker", "app.watcher", "app.api.routes"):
-        logging.getLogger(name).addHandler(h)
+    # Attach only to the root "app" logger — children (app.worker,
+    # app.watcher, app.api.routes) propagate up automatically. Adding to
+    # each child as well caused every log line to be emitted twice.
+    logging.getLogger("app").addHandler(h)
