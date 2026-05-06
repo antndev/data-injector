@@ -3,16 +3,43 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    inbox_dir: Path = Path("/data/inbox")
-    processing_dir: Path = Path("/data/processing")
-    done_dir: Path = Path("/data/done")
-    failed_dir: Path = Path("/data/failed")
-    duplicates_dir: Path = Path("/data/duplicates")
-    unsupported_dir: Path = Path("/data/unsupported")
-    uploads_tmp_dir: Path = Path("/data/_uploads")  # in-flight uploads, atomically renamed into inbox
+    data_dir: Path = Path("/data")
     db_path: Path = Path("/db/ingestor.db")
-    log_dir: Path = Path("/db/logs")
 
+    # ── Derived paths (not env vars) ─────────────────────────────────────────
+    @property
+    def inbox_dir(self) -> Path:
+        return self.data_dir / "inbox"
+
+    @property
+    def processing_dir(self) -> Path:
+        return self.data_dir / "processing"
+
+    @property
+    def done_dir(self) -> Path:
+        return self.data_dir / "done"
+
+    @property
+    def failed_dir(self) -> Path:
+        return self.data_dir / "failed"
+
+    @property
+    def duplicates_dir(self) -> Path:
+        return self.data_dir / "duplicates"
+
+    @property
+    def unsupported_dir(self) -> Path:
+        return self.data_dir / "unsupported"
+
+    @property
+    def uploads_tmp_dir(self) -> Path:
+        return self.data_dir / "_uploads"
+
+    @property
+    def log_dir(self) -> Path:
+        return self.db_path.parent / "logs"
+
+    # ── Qdrant ────────────────────────────────────────────────────────────────
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
     qdrant_api_key: str | None = None
@@ -20,9 +47,11 @@ class Settings(BaseSettings):
     qdrant_knowledge_base_id: str = ""
     embedding_dimensions: int = 768
 
+    # ── Ollama ────────────────────────────────────────────────────────────────
     ollama_host: str = "http://ollama:11434"
     embedding_model: str = "nomic-embed-text"
 
+    # ── Pipeline tuning ───────────────────────────────────────────────────────
     chunk_size: int = 512
     chunk_overlap: int = 50
     worker_concurrency: int = 64
@@ -31,12 +60,11 @@ class Settings(BaseSettings):
     upsert_concurrency: int = 4
     stability_wait_s: int = 2
 
+    # ── OpenWebUI ────────────────────────────────────────────────────────────
     openwebui_user_id: str
 
-    # Dashboard password — any characters, min 8. No default forces explicit config.
-    admin_password: str
-
-    # Audit log settings
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    admin_password: str  # no default — app won't start without this set
     auth_log_retention_days: int = 30
     auth_log_max_total_mb: int = 100
 
