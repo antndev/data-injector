@@ -133,7 +133,7 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
   display:inline-grid;place-items:center;width:13px;height:13px;
   border:1px solid var(--dim);border-radius:50%;
   font-size:9px;font-weight:600;color:var(--dim);
-  cursor:help;font-style:italic;font-family:Georgia,serif;
+  cursor:default;font-style:italic;font-family:Georgia,serif;
 }
 .rate.eta .info:hover{color:var(--text);border-color:var(--mute)}
 .rate.eta .info::after{
@@ -851,21 +851,38 @@ function updateRates(){
   $('r-min-in').textContent=totalIn;
   $('r-min-out').textContent=totalOut;
   const remaining=(parseInt($('c-queued').textContent)||0)+(parseInt($('c-processing').textContent)||0);
-  const eta=$('r-eta');
-  if(remaining<=0){
-    eta.classList.remove('loading');
-    eta.textContent='—';
-  } else if(rIn>0.3){
-    eta.classList.add('loading');
-    eta.innerHTML='Loading <span class="info" data-tip="ETA is unavailable while files are being uploaded">i</span>';
-  } else if(rOutEta>0.05){
-    eta.classList.remove('loading');
-    eta.textContent=fmtETA(remaining/rOutEta);
-  } else {
-    eta.classList.remove('loading');
-    eta.textContent='…';
-  }
+  // Compute desired state, then only mutate DOM if it changed. Rewriting
+  // the inner HTML every tick would destroy the <span class="info"> node
+  // and reset its hover state — making the tooltip blink each tick.
+  let mode,text;
+  if(remaining<=0)        { mode='idle';    text='—'; }
+  else if(rIn>0.3)        { mode='loading'; text='Loading'; }
+  else if(rOutEta>0.05)   { mode='eta';     text=fmtETA(remaining/rOutEta); }
+  else                    { mode='waiting'; text='…'; }
+  setEtaDisplay(mode,text);
   paintSpark('spark-in',inEvents);paintSpark('spark-out',outEvents);
+}
+
+let _etaState={mode:null,text:null};
+function setEtaDisplay(mode,text){
+  if(_etaState.mode===mode&&_etaState.text===text) return;
+  const eta=$('r-eta');
+  if(mode!==_etaState.mode){
+    if(mode==='loading'){
+      eta.classList.add('loading');
+      eta.innerHTML='<span id="r-eta-text">Loading</span> <span class="info" data-tip="ETA is unavailable while files are being uploaded">i</span>';
+    } else {
+      eta.classList.remove('loading');
+      eta.textContent=text;
+    }
+  } else if(mode==='loading'){
+    // Same loading state, just refresh the text label without touching the i.
+    const t=document.getElementById('r-eta-text');
+    if(t&&t.textContent!==text) t.textContent=text;
+  } else if(eta.textContent!==text){
+    eta.textContent=text;
+  }
+  _etaState={mode,text};
 }
 setInterval(updateRates,500);      // 2 Hz refresh — feels live
 
