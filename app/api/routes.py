@@ -68,6 +68,37 @@ async def health():
     return {"ok": True}
 
 
+@router.post("/events/clear")
+async def clear_events():
+    events.clear_buffer()
+    return {"ok": True}
+
+
+@router.get("/files/{file_id}/error")
+async def get_file_error(file_id: str):
+    """Return the saved error message for a failed file."""
+    async with connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT filename, error_message FROM files WHERE id=?", (file_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        raise HTTPException(404, "File not found")
+
+    msg = row["error_message"] or ""
+    # Also pull the disk-side .error sidecar if present (more detail than DB truncation)
+    err_path = settings.failed_dir / (row["filename"] + ".error")
+    if err_path.exists():
+        try:
+            disk = err_path.read_text(encoding="utf-8", errors="replace")
+            if disk and disk != msg:
+                msg = disk
+        except OSError:
+            pass
+    return {"filename": row["filename"], "error": msg}
+
+
 @router.get("/status")
 async def status():
     async with connect() as db:

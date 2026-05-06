@@ -403,9 +403,12 @@ async def _embed_and_upload(
     batch_size = settings.embedding_batch_size
     batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
 
+    embed_sem = asyncio.Semaphore(settings.embed_concurrency)
+
     async def _embed_one(batch: list[str]) -> list:
-        resp = await ollama.embed(model=settings.embedding_model, input=batch)
-        return resp.embeddings
+        async with embed_sem:
+            resp = await ollama.embed(model=settings.embedding_model, input=batch)
+            return resp.embeddings
 
     all_embeddings = await asyncio.gather(*[_embed_one(b) for b in batches])
 
@@ -433,13 +436,18 @@ async def _embed_and_upload(
 
     # ── 3. Upsert to Qdrant + register in OpenWebUI in parallel ───────────
     upsert_size = 256
+    upsert_sem = asyncio.Semaphore(settings.upsert_concurrency)
+
+    async def _one_upsert(slice_):
+        async with upsert_sem:
+            await qdrant.upsert(
+                collection_name=settings.qdrant_collection,
+                points=slice_,
+            )
 
     async def _do_upsert():
         await asyncio.gather(*[
-            qdrant.upsert(
-                collection_name=settings.qdrant_collection,
-                points=points[i : i + upsert_size],
-            )
+            _one_upsert(points[i : i + upsert_size])
             for i in range(0, len(points), upsert_size)
         ])
 

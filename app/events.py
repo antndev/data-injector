@@ -39,6 +39,10 @@ def history() -> list[dict]:
     return list(_buffer)
 
 
+def clear_buffer():
+    _buffer.clear()
+
+
 async def subscribe() -> AsyncIterator[dict]:
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _subscribers.add(q)
