@@ -272,10 +272,11 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
   margin:0 12px;padding:10px 14px;
   border:1.5px dashed var(--line);border-radius:8px;
   display:flex;align-items:center;gap:10px;
-  cursor:pointer;transition:border-color .15s,background .15s;
+  cursor:pointer;transition:border-color .15s,background .15s,opacity .15s;
   background:#111;flex-shrink:0;
 }
 #drop-zone:hover,#drop-zone.drag{border-color:var(--blue);background:rgba(62,166,255,.04)}
+#drop-zone.busy{opacity:.5;pointer-events:none}
 #drop-zone svg{width:16px;height:16px;flex-shrink:0;color:var(--dim)}
 #drop-zone:hover svg,#drop-zone.drag svg{color:var(--blue)}
 #drop-zone .dz-text{font-size:12px;color:var(--mute)}
@@ -283,12 +284,17 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .dz-wrap{border-top:1px solid var(--line);padding:10px 0 8px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
 #upload-progress{
   margin:0 12px;font-size:11px;color:var(--dim);
-  display:none;align-items:center;gap:8px;
+  display:none;flex-direction:column;gap:4px;
 }
 #upload-progress.show{display:flex}
-#up-bar-wrap{flex:1;background:var(--line);border-radius:3px;height:3px}
-#up-bar{height:100%;border-radius:3px;background:var(--blue);transition:width .15s;width:0%}
-#up-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.up-row{display:flex;align-items:center;gap:8px;font-size:11px}
+#up-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;color:var(--mute)}
+#up-pct{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--mute)}
+#up-bar-wrap{background:var(--line);border-radius:3px;height:3px;overflow:hidden}
+#up-bar{height:100%;border-radius:3px;background:var(--blue);transition:width .15s,background .3s;width:0%}
+#up-bar.done{background:var(--green)}
+#up-bar.err{background:var(--red)}
+#up-stats{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -330,9 +336,12 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       <input id="dz-input" type="file" multiple>
     </div>
     <div id="upload-progress">
-      <span id="up-label">Uploading…</span>
+      <div class="up-row">
+        <span id="up-label">Uploading…</span>
+        <span id="up-pct">0%</span>
+      </div>
       <div id="up-bar-wrap"><div id="up-bar"></div></div>
-      <span id="up-pct">0%</span>
+      <div id="up-stats"></div>
     </div>
   </div>
 
@@ -979,47 +988,107 @@ const upProgress = $('upload-progress');
 const upBar = $('up-bar');
 const upPct = $('up-pct');
 const upLabel = $('up-label');
+const upStats = $('up-stats');
 
-function dzDragover(e){e.preventDefault();dz.classList.add('drag')}
-function dzDragleave(){dz.classList.remove('drag')}
-function dzDrop(e){e.preventDefault();dz.classList.remove('drag');uploadFiles(e.dataTransfer.files)}
-dz.addEventListener('dragover',dzDragover);
-dz.addEventListener('dragleave',dzDragleave);
-dz.addEventListener('drop',dzDrop);
-dzInput.addEventListener('change',()=>{if(dzInput.files.length)uploadFiles(dzInput.files);dzInput.value=''});
+let dragDepth = 0;
+dz.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; dz.classList.add('drag'); });
+dz.addEventListener('dragover',  e => { e.preventDefault(); });
+dz.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; dz.classList.remove('drag'); } });
+dz.addEventListener('drop', async e => {
+  e.preventDefault(); dragDepth = 0; dz.classList.remove('drag');
+  const files = await collectFiles(e.dataTransfer);
+  uploadFiles(files);
+});
+dzInput.addEventListener('change', () => {
+  uploadFiles([...dzInput.files]);
+  dzInput.value = '';
+});
 
-async function uploadFiles(fileList){
-  if(!fileList||!fileList.length)return;
-  const fd=new FormData();
-  const names=[...fileList].map(f=>f.name);
-  for(const f of fileList)fd.append('files',f);
-  upLabel.textContent=`Uploading ${fileList.length} file${fileList.length>1?'s':''}…`;
-  upBar.style.width='0%';upPct.textContent='0%';
+// Walks dropped folders recursively and returns a flat File[] (folders themselves are skipped).
+async function collectFiles(dt) {
+  const items = dt.items;
+  if (!items || !items.length || !items[0].webkitGetAsEntry) return [...dt.files];
+  const out = [];
+  const walk = async entry => {
+    if (entry.isFile) {
+      const f = await new Promise((res, rej) => entry.file(res, rej));
+      out.push(f);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      while (true) {
+        const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        if (!batch.length) break;
+        for (const e of batch) await walk(e);
+      }
+    }
+  };
+  for (const item of items) {
+    const entry = item.webkitGetAsEntry();
+    if (entry) await walk(entry);
+  }
+  return out;
+}
+
+const fmtBytes = b => {
+  if (b < 1024) return b + ' B';
+  const u = ['KB','MB','GB','TB']; let i = -1;
+  do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1);
+  return b.toFixed(b < 10 ? 1 : 0) + ' ' + u[i];
+};
+const fmtEta = s => {
+  if (!isFinite(s) || s < 0) return '—';
+  if (s < 60) return Math.ceil(s) + 's';
+  if (s < 3600) return Math.round(s/60) + 'm';
+  return Math.round(s/3600) + 'h';
+};
+
+async function uploadFiles(fileList) {
+  if (!fileList || !fileList.length) return;
+  const fd = new FormData();
+  for (const f of fileList) fd.append('files', f, f.name);
+
+  upLabel.textContent = `Uploading ${fileList.length} file${fileList.length > 1 ? 's' : ''}…`;
+  upBar.style.width = '0%'; upPct.textContent = '0%'; upStats.textContent = '';
   upProgress.classList.add('show');
-  dz.style.pointerEvents='none';dz.style.opacity='.5';
-  try{
-    await new Promise((resolve,reject)=>{
-      const xhr=new XMLHttpRequest();
-      xhr.open('POST','/upload');
-      xhr.upload.onprogress=ev=>{
-        if(ev.lengthComputable){
-          const p=Math.round(ev.loaded/ev.total*100);
-          upBar.style.width=p+'%';upPct.textContent=p+'%';
+  dz.classList.add('busy');
+
+  const started = performance.now();
+  let lastT = started, lastLoaded = 0, ema = 0;
+
+  try {
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/upload');
+      xhr.upload.onprogress = ev => {
+        if (!ev.lengthComputable) return;
+        const now = performance.now();
+        const dt = (now - lastT) / 1000;
+        if (dt >= 0.2) {
+          const inst = (ev.loaded - lastLoaded) / dt;
+          ema = ema ? ema * 0.7 + inst * 0.3 : inst;
+          lastT = now; lastLoaded = ev.loaded;
+          const eta = ema > 0 ? (ev.total - ev.loaded) / ema : Infinity;
+          upStats.textContent = `${fmtBytes(ema)}/s · ${fmtEta(eta)} left`;
         }
+        const p = Math.round(ev.loaded / ev.total * 100);
+        upBar.style.width = p + '%'; upPct.textContent = p + '%';
       };
-      xhr.onload=()=>xhr.status<300?resolve():reject(new Error(xhr.responseText||xhr.statusText));
-      xhr.onerror=()=>reject(new Error('Network error'));
+      xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(xhr.responseText || xhr.statusText));
+      xhr.onerror = () => reject(new Error('Network error'));
       xhr.send(fd);
     });
-    upBar.style.background='var(--green)';upBar.style.width='100%';upPct.textContent='100%';
-    upLabel.textContent=`Queued: ${names.join(', ')}`;
-    setTimeout(()=>{upProgress.classList.remove('show');upBar.style.background='';},3000);
-  }catch(err){
-    upBar.style.background='var(--red)';
-    upLabel.textContent='Upload failed: '+err.message;
-    setTimeout(()=>{upProgress.classList.remove('show');upBar.style.background='';},5000);
-  }finally{
-    dz.style.pointerEvents='';dz.style.opacity='';
+    const elapsed = (performance.now() - started) / 1000;
+    upBar.classList.add('done'); upBar.style.width = '100%'; upPct.textContent = '100%';
+    upLabel.textContent = `Queued ${fileList.length} file${fileList.length > 1 ? 's' : ''}`;
+    upStats.textContent = `in ${fmtEta(elapsed)}`;
+    setTimeout(() => { upProgress.classList.remove('show'); upBar.classList.remove('done'); }, 3000);
+  } catch (err) {
+    upBar.classList.add('err');
+    upLabel.textContent = 'Upload failed: ' + err.message;
+    upStats.textContent = '';
+    setTimeout(() => { upProgress.classList.remove('show'); upBar.classList.remove('err'); }, 5000);
+  } finally {
+    dz.classList.remove('busy');
   }
 }
 </script>

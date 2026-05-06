@@ -325,13 +325,35 @@ async def bulk_retry(body: BulkBody):
 
 
 _UPLOAD_CHUNK = 1 << 20  # 1 MiB read chunks — keeps memory flat for large files
+_MAX_NAME_BYTES = 200    # safe under the 255-byte ext4/ntfs limit
+
+
+def _safe_filename(raw: str | None) -> str:
+    """Reduce a browser-supplied filename to a single safe basename."""
+    # Browsers may send forward- or backslash paths (e.g. webkitdirectory uploads).
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    # strip control chars and DEL
+    name = "".join(c for c in name if c >= " " and c != "\x7f")
+    # leading/trailing dots and spaces cause grief on Windows shares
+    name = name.strip(" .")
+    if not name or name in (".", "..") or len(name) > _MAX_NAME_BYTES:
+        if len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
+            ext = Path(name).suffix[:20]
+            stem = Path(name).stem
+            stem = stem.encode("utf-8")[: _MAX_NAME_BYTES - len(ext.encode("utf-8"))]
+            name = stem.decode("utf-8", errors="ignore").rstrip() + ext
+        if not name or name in (".", ".."):
+            name = "unnamed"
+    return name
 
 
 @router.post("/upload")
 async def upload_files(files: list[UploadFile] = File(...)):
-    queued = []
+    if not files:
+        raise HTTPException(400, "No files provided")
+    queued: list[str] = []
     for upload in files:
-        name = Path(upload.filename or "unnamed").name  # strip any path traversal
+        name = _safe_filename(upload.filename)
         dest = settings.inbox_dir / name
         counter = 1
         while dest.exists():
@@ -344,6 +366,8 @@ async def upload_files(files: list[UploadFile] = File(...)):
         except Exception as exc:
             dest.unlink(missing_ok=True)
             raise HTTPException(500, f"Failed to write {name}: {exc}") from exc
+        finally:
+            await upload.close()
         queued.append(dest.name)
     trigger_scan()
     return {"ok": True, "queued": queued}
