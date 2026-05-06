@@ -126,7 +126,15 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .rate.in .arrow{color:var(--blue)}
 .rate.out .arrow{color:var(--green)}
 .rate.act .v{color:var(--yellow)}
-.rate.eta .v{color:var(--purple);font-variant-numeric:tabular-nums}
+.rate.eta .v{color:var(--purple);font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:4px}
+.rate.eta .v.loading{color:var(--mute);font-size:14px;font-weight:500}
+.rate.eta .info{
+  display:inline-grid;place-items:center;width:13px;height:13px;
+  border:1px solid var(--dim);border-radius:50%;
+  font-size:9px;font-weight:600;color:var(--dim);
+  cursor:help;font-style:italic;font-family:Georgia,serif;
+}
+.rate.eta .info:hover{color:var(--text);border-color:var(--mute)}
 .rate.tput{margin-left:auto;color:var(--dim);font-size:12px}
 .rate.tput b{color:var(--mute);font-weight:500}
 .spark{display:flex;align-items:flex-end;gap:1px;height:18px;margin-left:6px}
@@ -816,14 +824,19 @@ function updateRates(){
   const remaining=(parseInt($('c-queued').textContent)||0)+(parseInt($('c-processing').textContent)||0);
   // Hide ETA while uploads are still arriving — the calculation is unstable
   // because the backlog is growing while throughput is still ramping up.
+  const eta=$('r-eta');
   if(remaining<=0){
-    $('r-eta').textContent='—';
+    eta.classList.remove('loading');
+    eta.textContent='—';
   } else if(rIn>0.3){
-    $('r-eta').textContent='uploading';
+    eta.classList.add('loading');
+    eta.innerHTML='loading <span class="info" title="ETA is unavailable while files are being uploaded">i</span>';
   } else if(rOut>0.05){
-    $('r-eta').textContent=fmtETA(remaining/rOut);
+    eta.classList.remove('loading');
+    eta.textContent=fmtETA(remaining/rOut);
   } else {
-    $('r-eta').textContent='…';
+    eta.classList.remove('loading');
+    eta.textContent='…';
   }
   paintSpark('spark-in',inEvents);paintSpark('spark-out',outEvents);
 }
