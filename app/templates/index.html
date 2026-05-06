@@ -1047,57 +1047,81 @@ window.addEventListener('beforeunload', e => {
   if (uploading) { e.preventDefault(); e.returnValue = ''; }
 });
 
+// Upload files one at a time — avoids multipart field limits and gives
+// per-file progress. Each file is its own POST /upload request.
 async function uploadFiles(fileList) {
   if (!fileList || !fileList.length) return;
-  if (uploading) return;  // ignore drops while one is already in flight
-  const fd = new FormData();
-  for (const f of fileList) fd.append('files', f, f.name);
-
-  upLabel.textContent = `Uploading ${fileList.length} file${fileList.length > 1 ? 's' : ''}…`;
-  upBar.style.width = '0%'; upPct.textContent = '0%'; upStats.textContent = '';
-  upProgress.classList.add('show');
-  dz.classList.add('busy');
+  if (uploading) return;
   uploading = true;
+  dz.classList.add('busy');
+  upProgress.classList.add('show');
 
-  const started = performance.now();
-  let lastT = started, lastLoaded = 0, ema = 0;
+  const total = fileList.length;
+  let done = 0, failed = 0;
 
-  try {
-    await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/upload');
-      xhr.upload.onprogress = ev => {
-        if (!ev.lengthComputable) return;
-        const now = performance.now();
-        const dt = (now - lastT) / 1000;
-        if (dt >= 0.2) {
-          const inst = (ev.loaded - lastLoaded) / dt;
-          ema = ema ? ema * 0.7 + inst * 0.3 : inst;
-          lastT = now; lastLoaded = ev.loaded;
-          const eta = ema > 0 ? (ev.total - ev.loaded) / ema : Infinity;
-          upStats.textContent = `${fmtBytes(ema)}/s · ${fmtEta(eta)} left`;
-        }
-        const p = Math.round(ev.loaded / ev.total * 100);
-        upBar.style.width = p + '%'; upPct.textContent = p + '%';
-      };
-      xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(xhr.responseText || xhr.statusText));
-      xhr.onerror = () => reject(new Error('Network error'));
-      xhr.send(fd);
-    });
-    const elapsed = (performance.now() - started) / 1000;
-    upBar.classList.add('done'); upBar.style.width = '100%'; upPct.textContent = '100%';
-    upLabel.textContent = `Queued ${fileList.length} file${fileList.length > 1 ? 's' : ''}`;
-    upStats.textContent = `in ${fmtEta(elapsed)}`;
+  for (const file of fileList) {
+    const idx = done + failed + 1;
+    upLabel.textContent = total > 1
+      ? `${file.name} (${idx}/${total})`
+      : file.name;
+    upBar.classList.remove('done', 'err');
+    upBar.style.width = '0%'; upPct.textContent = '0%'; upStats.textContent = '';
+
+    const fd = new FormData();
+    fd.append('files', file, file.name);
+
+    const started = performance.now();
+    let lastT = started, lastLoaded = 0, ema = 0;
+
+    try {
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload');
+        xhr.upload.onprogress = ev => {
+          if (!ev.lengthComputable) return;
+          const now = performance.now();
+          const dt = (now - lastT) / 1000;
+          if (dt >= 0.2) {
+            const inst = (ev.loaded - lastLoaded) / dt;
+            ema = ema ? ema * 0.7 + inst * 0.3 : inst;
+            lastT = now; lastLoaded = ev.loaded;
+            const eta = ema > 0 ? (ev.total - ev.loaded) / ema : Infinity;
+            upStats.textContent = `${fmtBytes(ema)}/s · ${fmtEta(eta)} left`;
+          }
+          const p = Math.round(ev.loaded / ev.total * 100);
+          upBar.style.width = p + '%'; upPct.textContent = p + '%';
+        };
+        xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error(xhr.statusText));
+        xhr.onerror = () => reject(new Error('Network error'));
+        xhr.send(fd);
+      });
+      done++;
+      upBar.classList.add('done'); upBar.style.width = '100%'; upPct.textContent = '100%';
+      const elapsed = (performance.now() - started) / 1000;
+      upStats.textContent = `in ${fmtEta(elapsed)}`;
+    } catch (err) {
+      failed++;
+      upBar.classList.add('err');
+      upStats.textContent = err.message;
+      await new Promise(r => setTimeout(r, 1500)); // brief pause so user sees the error
+    }
+  }
+
+  // Final summary
+  const elapsed = '';
+  if (failed === 0) {
+    upLabel.textContent = `Queued ${done} file${done > 1 ? 's' : ''}`;
+    upStats.textContent = '';
     setTimeout(() => { upProgress.classList.remove('show'); upBar.classList.remove('done'); }, 3000);
-  } catch (err) {
+  } else {
     upBar.classList.add('err');
-    upLabel.textContent = 'Upload failed: ' + err.message;
+    upLabel.textContent = `${done} queued · ${failed} failed`;
     upStats.textContent = '';
     setTimeout(() => { upProgress.classList.remove('show'); upBar.classList.remove('err'); }, 5000);
-  } finally {
-    dz.classList.remove('busy');
-    uploading = false;
   }
+
+  dz.classList.remove('busy');
+  uploading = false;
 }
 </script>
 </body>
