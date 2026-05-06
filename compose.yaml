@@ -21,3 +21,7 @@ networks:
     external: true
   openwebui_rag-internal:
     external: true
+
+volumes:
+  openwebui_openwebui_data:
+    external: true

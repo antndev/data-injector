@@ -16,16 +16,7 @@ body{
   background:var(--bg);color:var(--text);
   font:14px/1.5 Inter,system-ui,sans-serif;
   display:grid;place-items:center;
-  position:relative;overflow:hidden;
-}
-body::before{
-  content:'';position:absolute;inset:0;
-  background-image:
-    radial-gradient(circle at 50% 0%, rgba(62,166,255,.08), transparent 60%),
-    linear-gradient(rgba(255,255,255,.015) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.015) 1px, transparent 1px);
-  background-size:auto, 32px 32px, 32px 32px;
-  pointer-events:none;
+  overflow:hidden;
 }
 
 .card{
@@ -111,18 +102,6 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
 }
 .err svg{width:14px;height:14px;flex-shrink:0}
 
-.foot{
-  margin-top:22px;padding-top:18px;
-  border-top:1px solid var(--line);
-  text-align:center;color:var(--dim);
-  font-size:11px;letter-spacing:.08em;text-transform:uppercase;
-}
-.foot .dot{
-  display:inline-block;width:6px;height:6px;border-radius:50%;
-  background:#2ba640;margin-right:6px;vertical-align:middle;
-  animation:pulse 1.5s infinite;
-}
-@keyframes pulse{50%{opacity:.3}}
 </style>
 </head>
 <body>
@@ -137,7 +116,7 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
     </svg>
   </div>
   <h1>Authentication</h1>
-  <div class="sub">Enter your password to continue</div>
+  <div class="sub">Enter the password to enter</div>
 
   <div class="field">
     <input type="password" name="password"
@@ -179,8 +158,6 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
     }, 1000);
   </script>
   {% endif %}
-
-  <div class="foot"><span class="dot"></span>data ingestor</div>
 </form>
 </body>
 </html>
