@@ -62,7 +62,7 @@ async def login_page(request: Request, error: str | None = None):
 
 
 @router.post("/login")
-async def login(request: Request, password: str = Form(...)):
+async def login(request: Request, password: str = Form(default="")):
     ip = request.client.host if request.client else "?"
 
     locked, remaining = _is_locked(ip)
