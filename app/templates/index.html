@@ -161,6 +161,20 @@ td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
 tr:hover td{background:var(--panel)}
 tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 
+/* incremental update animations — replaces the full-list flash */
+@keyframes rowFadeIn{from{opacity:0}to{opacity:1}}
+@keyframes rowEnterFlash{
+  0%{background:rgba(62,166,255,.18)}
+  100%{background:transparent}
+}
+@keyframes rowUpdateFlash{
+  0%{background:rgba(255,214,10,.14)}
+  100%{background:transparent}
+}
+tr.row-new{animation:rowFadeIn .22s ease-out}
+tr.row-new td{animation:rowEnterFlash .9s ease-out}
+tr.row-upd td{animation:rowUpdateFlash .7s ease-out}
+
 input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;border:1.5px solid var(--dim);border-radius:3px;cursor:pointer;background:transparent;display:grid;place-content:center;flex-shrink:0}
 input[type=checkbox]:checked{background:var(--blue);border-color:var(--blue)}
 input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid #000;border-width:0 2px 2px 0;transform:rotate(45deg);margin-top:-2px}
@@ -514,10 +528,92 @@ async function loadMore(){
   loadingMore=true;
   try{
     const batch=await fetch(fileQS(pageOffset)).then(r=>r.json());
-    appendBatch(batch);
+    // Deduplicate against what's already loaded — when new files arrive at the
+    // top mid-session the API offset shifts, so the next page can overlap.
+    const known=new Set(files.map(f=>f.id));
+    const fresh=batch.filter(f=>!known.has(f.id));
+    appendBatch(fresh);
     if(batch.length<PAGE) hasMore=false;
   }catch(e){console.error('loadMore',e);}
   finally{loadingMore=false;}
+}
+
+// Diff-based refresh — adds new rows at top with a soft slide-in, flashes
+// rows whose status changed, never blows the whole table away.
+async function smartRefresh(){
+  try{
+    const [s,batch]=await Promise.all([
+      fetch('/status').then(r=>r.json()),
+      fetch(fileQS(0)).then(r=>r.json())
+    ]);
+    updateCounts(s);
+
+    const tbody=$('rows');
+    const oldById=new Map(files.map(f=>[f.id,f]));
+    const newIds=new Set(batch.map(f=>f.id));
+
+    const toAdd=[];
+    const toUpdate=[];
+    for(const nf of batch){
+      const of_=oldById.get(nf.id);
+      if(!of_){toAdd.push(nf);continue;}
+      if(of_.status!==nf.status||
+         of_.qdrant_chunk_count!==nf.qdrant_chunk_count||
+         of_.file_size_bytes!==nf.file_size_bytes||
+         of_.error_message!==nf.error_message){
+        toUpdate.push(nf);
+      }
+    }
+
+    // Update existing rows in place — replace cells, keep the <tr> node so
+    // selection state and animations don't restart.
+    for(const f of toUpdate){
+      const tr=tbody.querySelector(`tr[data-id="${f.id}"]`);
+      if(!tr) continue;
+      const fresh=makeRow(f);
+      tr.innerHTML=fresh.innerHTML;
+      const idx=files.findIndex(x=>x.id===f.id);
+      if(idx!==-1) files[idx]=f;
+      tr.classList.remove('row-upd');void tr.offsetWidth;
+      tr.classList.add('row-upd');
+    }
+
+    // Add brand-new rows at the top (batch is created_at DESC). Reverse so
+    // the most recent ends up topmost when prepended one at a time.
+    if(toAdd.length){
+      const frag=document.createDocumentFragment();
+      for(const f of toAdd){
+        const tr=makeRow(f);
+        tr.classList.add('row-new');
+        frag.appendChild(tr);
+      }
+      tbody.prepend(frag);
+      files=[...toAdd,...files];
+      pageOffset=files.length;
+      // Strip the animation class after it plays so it can re-trigger later.
+      setTimeout(()=>tbody.querySelectorAll('tr.row-new').forEach(t=>t.classList.remove('row-new')),900);
+    }
+
+    // Drop rows that vanished from the first page AND aren't in our deeper
+    // pagination cache — only safe within the first PAGE rows since we
+    // can't know what's beyond. Skip removal otherwise to avoid false drops.
+    if(files.length<=PAGE){
+      const removed=files.filter(f=>!newIds.has(f.id));
+      for(const f of removed){
+        const tr=tbody.querySelector(`tr[data-id="${f.id}"]`);
+        if(tr){
+          tr.style.transition='opacity .2s';
+          tr.style.opacity='0';
+          setTimeout(()=>tr.remove(),200);
+        }
+        selected.delete(f.id);
+      }
+      files=files.filter(f=>newIds.has(f.id));
+    }
+
+    $('empty').style.display=files.length?'none':'block';
+    if(toUpdate.length||toAdd.length) renderBulk();
+  }catch(e){console.error('smartRefresh',e);}
 }
 
 // IntersectionObserver — fires when sentinel div near viewport
@@ -740,15 +836,14 @@ let es=null;
 function fmtTime(iso){return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
 let lastReload=0;
 function scheduleReload(){
-  // Throttle to one reload every ~1.5s — under heavy event flux a debounced
-  // reload never fires because new events keep resetting it, causing the
-  // sidebar counts (e.g. Processing) to drift from the visible rows.
+  // Throttle to one diff-refresh per 1s. Uses smartRefresh (incremental,
+  // animated) instead of full load() so the table doesn't flash.
   const now=Date.now();
-  if(now-lastReload>1500){
+  if(now-lastReload>1000){
     lastReload=now;
-    load(true);
+    smartRefresh();
   } else if(!reloadDebounce){
-    reloadDebounce=setTimeout(()=>{reloadDebounce=null;lastReload=Date.now();load(true);},1500-(now-lastReload));
+    reloadDebounce=setTimeout(()=>{reloadDebounce=null;lastReload=Date.now();smartRefresh();},1000-(now-lastReload));
   }
 }
 function appendLog(evt){
