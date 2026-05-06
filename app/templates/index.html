@@ -788,32 +788,41 @@ let t;
 $('q').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{S=e.target.value;load()},250)};
 
 // ── Live rates (exponential decay, no sliding window) ────────────────────
-// Each event contributes exp(-Δt / TAU) to the rate. tau≈3s gives a half-life
-// of ~2s — when uploads stop, the displayed rate drops near-zero in 6–8s
-// instead of taking a full minute to drain a 60s window.
-const TAU=3;                        // seconds — decay constant for the live rate
+// Each event contributes exp(-Δt / τ) to the rate. Two τ values are tracked:
+//   TAU      = 3s   → snappy display rate, drops near zero in 6–8s
+//   TAU_ETA  = 15s  → smoother rate for ETA, less jitter when files vary
+const TAU=3;
+const TAU_ETA=15;
 const SPARK_BUCKETS=20;
-const SPARK_WINDOW_MS=20_000;       // visual-only history for the sparkline
+const SPARK_WINDOW_MS=20_000;
+const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);   // ~120s
+const REPLAY_CUTOFF_MS=10_000;      // ignore SSE-replay events older than this
+
 const inEvents=[],outEvents=[];
-let totalIn=0,totalOut=0;           // session counters (replaces "Last min")
+let totalIn=0,totalOut=0;
 
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
 buildSpark('spark-in');buildSpark('spark-out');
-function trackEvent(msg){
-  const now=Date.now();
-  if(/^Queued:/.test(msg)){inEvents.push(now);totalIn++;}
-  else if(/^Done:/.test(msg)||/^Failed:/.test(msg)){outEvents.push(now);totalOut++;}
+
+function trackEvent(msg,t){
+  // Each SSE connection replays the last ~300 buffered lines so the activity
+  // log survives reloads. Those replays carry their original timestamps and
+  // would otherwise spike the live rate when the page is refreshed mid-run.
+  const evtTs=t?new Date(t).getTime():Date.now();
+  if(Date.now()-evtTs>REPLAY_CUTOFF_MS) return;
+
+  if(/^Queued:/.test(msg)){inEvents.push(evtTs);totalIn++;}
+  else if(/^Done:/.test(msg)||/^Failed:/.test(msg)){outEvents.push(evtTs);totalOut++;}
 }
-// Drop very old events (well past meaningful weight) to keep arrays bounded.
-function prune(a){const c=Date.now()-Math.max(SPARK_WINDOW_MS,TAU*1000*8);while(a.length&&a[0]<c)a.shift();}
-function liveRate(arr){
+function prune(a){const c=Date.now()-PRUNE_HORIZON_MS;while(a.length&&a[0]<c)a.shift();}
+function liveRate(arr,tau){
   const now=Date.now();let s=0;
   for(let i=arr.length-1;i>=0;i--){
     const dt=(now-arr[i])/1000;
-    if(dt>TAU*8)break;             // negligible weight — array is time-ordered
-    s+=Math.exp(-dt/TAU);
+    if(dt>tau*8)break;             // negligible weight — array is time-ordered
+    s+=Math.exp(-dt/tau);
   }
-  return s/TAU;                    // events per second
+  return s/tau;                    // events per second
 }
 function paintSpark(id,arr){
   const el=$(id),now=Date.now(),bs=SPARK_WINDOW_MS/SPARK_BUCKETS;
@@ -834,15 +843,14 @@ function fmtETA(sec){
 }
 function updateRates(){
   prune(inEvents);prune(outEvents);
-  const rIn=liveRate(inEvents);
-  const rOut=liveRate(outEvents);
+  const rIn=liveRate(inEvents,TAU);
+  const rOut=liveRate(outEvents,TAU);
+  const rOutEta=liveRate(outEvents,TAU_ETA);     // smoother for ETA
   $('r-in').textContent=rIn.toFixed(1);
   $('r-out').textContent=rOut.toFixed(1);
   $('r-min-in').textContent=totalIn;
   $('r-min-out').textContent=totalOut;
   const remaining=(parseInt($('c-queued').textContent)||0)+(parseInt($('c-processing').textContent)||0);
-  // Hide ETA while uploads are still arriving — the calculation is unstable
-  // because the backlog is growing while throughput is still ramping up.
   const eta=$('r-eta');
   if(remaining<=0){
     eta.classList.remove('loading');
@@ -850,9 +858,9 @@ function updateRates(){
   } else if(rIn>0.3){
     eta.classList.add('loading');
     eta.innerHTML='Loading <span class="info" data-tip="ETA is unavailable while files are being uploaded">i</span>';
-  } else if(rOut>0.05){
+  } else if(rOutEta>0.05){
     eta.classList.remove('loading');
-    eta.textContent=fmtETA(remaining/rOut);
+    eta.textContent=fmtETA(remaining/rOutEta);
   } else {
     eta.classList.remove('loading');
     eta.textContent='…';
@@ -879,7 +887,7 @@ function scheduleReload(){
   }
 }
 function appendLog(evt){
-  trackEvent(evt.msg||'');
+  trackEvent(evt.msg||'',evt.t);
   if(/^(Queued|Done|Failed|Duplicate|Unsupported|Processing):/.test(evt.msg||'')){
     scheduleReload();
   }
