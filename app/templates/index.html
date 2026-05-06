@@ -129,12 +129,31 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .rate.eta .v{color:var(--purple);font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:4px}
 .rate.eta .v.loading{color:var(--mute);font-size:14px;font-weight:500}
 .rate.eta .info{
+  position:relative;
   display:inline-grid;place-items:center;width:13px;height:13px;
   border:1px solid var(--dim);border-radius:50%;
   font-size:9px;font-weight:600;color:var(--dim);
   cursor:help;font-style:italic;font-family:Georgia,serif;
 }
 .rate.eta .info:hover{color:var(--text);border-color:var(--mute)}
+.rate.eta .info::after{
+  content:attr(data-tip);
+  position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
+  background:var(--panel);color:var(--text);
+  border:1px solid var(--line);border-radius:6px;
+  padding:6px 10px;font-size:11px;font-weight:400;font-style:normal;
+  font-family:Inter,system-ui,sans-serif;
+  white-space:nowrap;pointer-events:none;
+  opacity:0;visibility:hidden;transition:opacity .12s, visibility .12s;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:50;
+}
+.rate.eta .info::before{
+  content:'';position:absolute;left:50%;top:calc(100% + 2px);transform:translateX(-50%) rotate(45deg);
+  width:7px;height:7px;background:var(--panel);
+  border-left:1px solid var(--line);border-top:1px solid var(--line);
+  pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s, visibility .12s;z-index:51;
+}
+.rate.eta .info:hover::after,.rate.eta .info:hover::before{opacity:1;visibility:visible}
 .rate.tput{margin-left:auto;color:var(--dim);font-size:12px}
 .rate.tput b{color:var(--mute);font-weight:500}
 .spark{display:flex;align-items:flex-end;gap:1px;height:18px;margin-left:6px}
@@ -830,7 +849,7 @@ function updateRates(){
     eta.textContent='—';
   } else if(rIn>0.3){
     eta.classList.add('loading');
-    eta.innerHTML='loading <span class="info" title="ETA is unavailable while files are being uploaded">i</span>';
+    eta.innerHTML='Loading <span class="info" data-tip="ETA is unavailable while files are being uploaded">i</span>';
   } else if(rOut>0.05){
     eta.classList.remove('loading');
     eta.textContent=fmtETA(remaining/rOut);
