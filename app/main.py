@@ -79,12 +79,6 @@ PUBLIC_PATHS = {"/login", "/logout", "/health"}
 async def lifespan(app: FastAPI):
     settings.create_dirs()
     _check_log_size()
-    # Wipe any staged uploads left over from a hard crash mid-transfer.
-    for stale in settings.uploads_tmp_dir.glob("*.part"):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
     await init_db()
 
     loop = asyncio.get_running_loop()

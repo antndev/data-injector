@@ -1,16 +1,14 @@
 import json
-import os
 import secrets
 import shutil
 import asyncio
 import logging
 import time
-import uuid
 from collections import defaultdict
 from pathlib import Path
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request, Form, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -324,69 +322,3 @@ async def bulk_retry(body: BulkBody):
         except HTTPException:
             pass
     return {"ok": True, "queued": n}
-
-
-_UPLOAD_CHUNK = 1 << 20  # 1 MiB read chunks — keeps memory flat for large files
-_MAX_NAME_BYTES = 200    # safe under the 255-byte ext4/ntfs limit
-
-
-def _safe_filename(raw: str | None) -> str:
-    """Reduce a browser-supplied filename to a single safe basename."""
-    # Browsers may send forward- or backslash paths (e.g. webkitdirectory uploads).
-    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
-    # strip control chars and DEL
-    name = "".join(c for c in name if c >= " " and c != "\x7f")
-    # leading/trailing dots and spaces cause grief on Windows shares
-    name = name.strip(" .")
-    if not name or name in (".", "..") or len(name) > _MAX_NAME_BYTES:
-        if len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
-            ext = Path(name).suffix[:20]
-            stem = Path(name).stem
-            stem = stem.encode("utf-8")[: _MAX_NAME_BYTES - len(ext.encode("utf-8"))]
-            name = stem.decode("utf-8", errors="ignore").rstrip() + ext
-        if not name or name in (".", ".."):
-            name = "unnamed"
-    return name
-
-
-@router.post("/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
-    """
-    Streams each upload to a staging dir, then atomically renames into the
-    inbox once the full body has been received. The watcher only ever sees
-    complete files, so a force-refresh / dropped connection mid-upload leaves
-    nothing for the worker to pick up.
-    """
-    if not files:
-        raise HTTPException(400, "No files provided")
-    settings.uploads_tmp_dir.mkdir(parents=True, exist_ok=True)
-    queued: list[str] = []
-    pending: list[Path] = []  # staging files for the in-flight request
-    try:
-        for upload in files:
-            name = _safe_filename(upload.filename)
-            tmp = settings.uploads_tmp_dir / f"{uuid.uuid4().hex}.{name}.part"
-            pending.append(tmp)
-            try:
-                with tmp.open("wb") as fh:
-                    while chunk := await upload.read(_UPLOAD_CHUNK):
-                        fh.write(chunk)
-            finally:
-                await upload.close()
-
-            dest = settings.inbox_dir / name
-            counter = 1
-            while dest.exists():
-                dest = settings.inbox_dir / f"{Path(name).stem}_{counter}{Path(name).suffix}"
-                counter += 1
-            os.replace(tmp, dest)  # atomic on the same filesystem
-            queued.append(dest.name)
-            trigger_scan()  # queue this file immediately, don't wait for the rest
-    except Exception as exc:
-        # Client disconnect or write failure — wipe any staged remains.
-        for p in pending:
-            p.unlink(missing_ok=True)
-        if isinstance(exc, HTTPException):
-            raise
-        raise HTTPException(500, f"Upload failed: {exc}") from exc
-    return {"ok": True, "queued": queued}

@@ -32,10 +32,6 @@ class Settings(BaseSettings):
         return self.data_dir / "unsupported"
 
     @property
-    def uploads_tmp_dir(self) -> Path:
-        return self.data_dir / "_uploads"
-
-    @property
     def log_dir(self) -> Path:
         return self.db_path.parent / "logs"
 
@@ -75,7 +71,7 @@ class Settings(BaseSettings):
         for d in [
             self.inbox_dir, self.processing_dir, self.done_dir,
             self.failed_dir, self.duplicates_dir, self.unsupported_dir,
-            self.uploads_tmp_dir, self.log_dir,
+            self.log_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
