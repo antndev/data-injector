@@ -1042,8 +1042,14 @@ const fmtEta = s => {
   return Math.round(s/3600) + 'h';
 };
 
+let uploading = false;
+window.addEventListener('beforeunload', e => {
+  if (uploading) { e.preventDefault(); e.returnValue = ''; }
+});
+
 async function uploadFiles(fileList) {
   if (!fileList || !fileList.length) return;
+  if (uploading) return;  // ignore drops while one is already in flight
   const fd = new FormData();
   for (const f of fileList) fd.append('files', f, f.name);
 
@@ -1051,6 +1057,7 @@ async function uploadFiles(fileList) {
   upBar.style.width = '0%'; upPct.textContent = '0%'; upStats.textContent = '';
   upProgress.classList.add('show');
   dz.classList.add('busy');
+  uploading = true;
 
   const started = performance.now();
   let lastT = started, lastLoaded = 0, ema = 0;
@@ -1089,6 +1096,7 @@ async function uploadFiles(fileList) {
     setTimeout(() => { upProgress.classList.remove('show'); upBar.classList.remove('err'); }, 5000);
   } finally {
     dz.classList.remove('busy');
+    uploading = false;
   }
 }
 </script>
