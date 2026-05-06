@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request, Form
+from fastapi import APIRouter, HTTPException, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -322,3 +322,28 @@ async def bulk_retry(body: BulkBody):
         except HTTPException:
             pass
     return {"ok": True, "queued": n}
+
+
+_UPLOAD_CHUNK = 1 << 20  # 1 MiB read chunks — keeps memory flat for large files
+
+
+@router.post("/upload")
+async def upload_files(files: list[UploadFile] = File(...)):
+    queued = []
+    for upload in files:
+        name = Path(upload.filename or "unnamed").name  # strip any path traversal
+        dest = settings.inbox_dir / name
+        counter = 1
+        while dest.exists():
+            dest = settings.inbox_dir / f"{Path(name).stem}_{counter}{Path(name).suffix}"
+            counter += 1
+        try:
+            with dest.open("wb") as fh:
+                while chunk := await upload.read(_UPLOAD_CHUNK):
+                    fh.write(chunk)
+        except Exception as exc:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(500, f"Failed to write {name}: {exc}") from exc
+        queued.append(dest.name)
+    trigger_scan()
+    return {"ok": True, "queued": queued}
