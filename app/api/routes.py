@@ -381,6 +381,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
                 counter += 1
             os.replace(tmp, dest)  # atomic on the same filesystem
             queued.append(dest.name)
+            trigger_scan()  # queue this file immediately, don't wait for the rest
     except Exception as exc:
         # Client disconnect or write failure — wipe any staged remains.
         for p in pending:
@@ -388,5 +389,4 @@ async def upload_files(files: list[UploadFile] = File(...)):
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(500, f"Upload failed: {exc}") from exc
-    trigger_scan()
     return {"ok": True, "queued": queued}
