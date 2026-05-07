@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from logging.handlers import TimedRotatingFileHandler
 from contextlib import asynccontextmanager
 
@@ -82,6 +83,13 @@ async def lifespan(app: FastAPI):
     await init_db()
 
     loop = asyncio.get_running_loop()
+    # Default ThreadPoolExecutor maxes out at ~32 workers — too small when
+    # WORKER_CONCURRENCY is high. Bump it so concurrent text extraction,
+    # hashing, and legacy conversions don't queue behind each other.
+    loop.set_default_executor(ThreadPoolExecutor(
+        max_workers=settings.worker_concurrency * 2,
+        thread_name_prefix="ingest",
+    ))
     events.set_loop(loop)
     events.install_log_handler()
 

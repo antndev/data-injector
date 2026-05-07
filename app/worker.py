@@ -318,8 +318,9 @@ async def _process_file(path: Path, file_id: str):
         if not text.strip():
             raise ValueError("No text extracted")
 
-        # 7. Chunk
-        chunks = splitter.split_text(text)
+        # 7. Chunk (offloaded — splitting a multi-MB doc otherwise blocks the
+        # event loop and stalls every other file's progress for seconds)
+        chunks = await loop.run_in_executor(None, splitter.split_text, text)
         if not chunks:
             raise ValueError("No chunks produced")
 
