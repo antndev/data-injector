@@ -50,6 +50,15 @@ _inbox_queue: asyncio.Queue | None = None  # set by run_worker; used by retry en
 _qdrant_global: AsyncQdrantClient | None = None
 _ollama_global: OllamaClient | None = None
 
+# ---------------------------------------------------------------------------
+# GLOBAL concurrency caps. Critically these must be shared across ALL files —
+# prior versions created one Semaphore per file, which meant 64 concurrent
+# files × 8 embed slots = 512 simultaneous Ollama requests, drowning the
+# embedding server. With these at module level the cap is honoured globally.
+# ---------------------------------------------------------------------------
+_embed_sem: asyncio.Semaphore | None = None
+_upsert_sem: asyncio.Semaphore | None = None
+
 
 def _qdrant_client() -> AsyncQdrantClient:
     """Return the shared Qdrant client (used by routes.py too)."""
@@ -84,7 +93,10 @@ async def recover_crashed():
 # Register new file as 'queued' immediately on detection
 # ---------------------------------------------------------------------------
 
-async def _register_as_queued(path: Path) -> str:
+async def _register_as_queued(path: Path) -> str | None:
+    """Insert a 'queued' row for `path`, or return the id of the existing
+    row if one is already queued/processing. Returns None if the file
+    disappeared before we could record its size."""
     async with _register_lock:
         async with connect() as db:
             db.row_factory = aiosqlite.Row
@@ -96,8 +108,13 @@ async def _register_as_queued(path: Path) -> str:
         if existing:
             return existing["id"]
 
+        # File can disappear between the watcher event and this stat call.
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return None
+
         file_id = str(uuid.uuid4())
-        size = path.stat().st_size if path.exists() else 0
         async with connect() as db:
             await db.execute(
                 "INSERT INTO files (id, filename, file_size_bytes, status) VALUES (?,?,?,'queued')",
@@ -113,7 +130,7 @@ async def _register_as_queued(path: Path) -> str:
 # ---------------------------------------------------------------------------
 
 async def run_worker(inbox_queue: asyncio.Queue):
-    global _inbox_queue, _qdrant_global, _ollama_global
+    global _inbox_queue, _qdrant_global, _ollama_global, _embed_sem, _upsert_sem
     _inbox_queue = inbox_queue
 
     # Initialise persistent clients once — reused for every file
@@ -124,6 +141,10 @@ async def run_worker(inbox_queue: asyncio.Queue):
         https=False,
     )
     _ollama_global = OllamaClient(host=settings.ollama_host)
+
+    # Global semaphores (see comment at module top — must NOT be per-file).
+    _embed_sem = asyncio.Semaphore(settings.embed_concurrency)
+    _upsert_sem = asyncio.Semaphore(settings.upsert_concurrency)
 
     await recover_crashed()
     await _ensure_qdrant_collection()
@@ -157,6 +178,10 @@ async def run_worker(inbox_queue: asyncio.Queue):
                 continue
             active_paths.add(key)
             file_id = await _register_as_queued(path)
+            if file_id is None:
+                # File vanished before we could register it (rare but possible).
+                active_paths.discard(key)
+                continue
             asyncio.create_task(_process_with_sem(sem, path, file_id))
 
 
@@ -166,7 +191,7 @@ async def _process_with_sem(sem: asyncio.Semaphore, path: Path, file_id: str):
     concurrency slot just sleeping.  The sem is only held while doing
     real work (hashing, extraction, embedding, Qdrant upsert).
     """
-    if path.parent == settings.inbox_dir:
+    if settings.stability_wait_s > 0 and path.parent == settings.inbox_dir:
         try:
             size1 = path.stat().st_size
         except OSError:
@@ -413,16 +438,18 @@ async def _embed_and_upload(
     file_id: str, filename: str, chunks: list[str],
     file_hash: str, file_size: int,
 ) -> int:
-    """Returns the number of chunks actually embedded + stored."""
     """
-    Full pipeline: delete stale data → embed → upsert + register in parallel.
+    Full pipeline for one file. Returns the number of chunks actually
+    embedded + stored.
 
     Delete phase:    Qdrant delete  ║  OpenWebUI unregister   (parallel)
-    Embed phase:     all batches fired concurrently            (parallel)
+    Embed phase:     batches fired concurrently, capped by the GLOBAL
+                     embed semaphore so total Ollama load stays bounded.
     Finish phase:    Qdrant upsert  ║  OpenWebUI register      (parallel)
     """
     ollama = _ollama_global
     qdrant = _qdrant_global
+    assert _embed_sem is not None and _upsert_sem is not None
 
     # ── 1. Delete old data (Qdrant vectors + OpenWebUI entry) in parallel ──
     async def _del_qdrant():
@@ -456,15 +483,13 @@ async def _embed_and_upload(
     batch_size = settings.embedding_batch_size
     batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
 
-    embed_sem = asyncio.Semaphore(settings.embed_concurrency)
-
     async def _embed_one(batch: list[str]) -> list[tuple[str, list]]:
         """
         Return list of (chunk, embedding) pairs. On batch failure (e.g. Ollama
         500 NaN), fall back to per-chunk embedding and silently drop chunks
         that still error so the file as a whole still succeeds.
         """
-        async with embed_sem:
+        async with _embed_sem:
             try:
                 resp = await ollama.embed(model=settings.embedding_model, input=batch)
                 return list(zip(batch, resp.embeddings))
@@ -515,10 +540,9 @@ async def _embed_and_upload(
 
     # ── 3. Upsert to Qdrant + register in OpenWebUI in parallel ───────────
     upsert_size = 256
-    upsert_sem = asyncio.Semaphore(settings.upsert_concurrency)
 
     async def _one_upsert(slice_):
-        async with upsert_sem:
+        async with _upsert_sem:
             await qdrant.upsert(
                 collection_name=settings.qdrant_collection,
                 points=slice_,
@@ -580,7 +604,7 @@ async def _ensure_qdrant_collection():
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
-        for block in iter(lambda: f.read(131072), b""):  # 128 KB blocks
+        for block in iter(lambda: f.read(1 << 20), b""):  # 1 MiB blocks
             h.update(block)
     return h.hexdigest()
 

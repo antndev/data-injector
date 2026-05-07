@@ -41,20 +41,27 @@ class Settings(BaseSettings):
     qdrant_api_key: str | None = None
     qdrant_collection: str = "open-webui_knowledge"
     qdrant_knowledge_base_id: str = ""
-    embedding_dimensions: int = 768
+    embedding_dimensions: int = 1024
 
     # ── Ollama ────────────────────────────────────────────────────────────────
-    ollama_host: str = "http://ollama:11434"
-    embedding_model: str = "nomic-embed-text"
+    ollama_host: str = "http://host.docker.internal:11434"
+    embedding_model: str = "bge-m3:latest"
 
     # ── Pipeline tuning ───────────────────────────────────────────────────────
-    chunk_size: int = 512
-    chunk_overlap: int = 50
+    # Larger chunks halve the number of embed calls, at the cost of slightly
+    # coarser retrieval. 1024 is a good balance for mixed prose / docs.
+    chunk_size: int = 1024
+    chunk_overlap: int = 100
     worker_concurrency: int = 64
     embedding_batch_size: int = 128
-    embed_concurrency: int = 8
-    upsert_concurrency: int = 4
-    stability_wait_s: int = 2
+    # Embed/upsert concurrency are GLOBAL caps across the whole worker pool —
+    # not per-file. Setting these higher than your embedding server can keep
+    # up with just queues requests internally without speedup.
+    embed_concurrency: int = 16
+    upsert_concurrency: int = 8
+    # 0 disables the stability wait entirely. Atomic uploads (SFTP, mv on
+    # same FS) need no wait. Bump to ~2 only for non-atomic copies.
+    stability_wait_s: int = 0
 
     # ── OpenWebUI ────────────────────────────────────────────────────────────
     openwebui_user_id: str

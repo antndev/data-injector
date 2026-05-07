@@ -15,8 +15,11 @@ CREATE TABLE IF NOT EXISTS files (
     deleted_at         TIMESTAMP,
     created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_status ON files(status);
-CREATE INDEX IF NOT EXISTS idx_hash   ON files(file_hash);
+CREATE INDEX IF NOT EXISTS idx_status     ON files(status);
+CREATE INDEX IF NOT EXISTS idx_hash       ON files(file_hash);
+-- Dashboard pagination orders by created_at DESC; without this every page
+-- query did a full-table scan + temp sort.
+CREATE INDEX IF NOT EXISTS idx_created_at ON files(created_at);
 """
 
 

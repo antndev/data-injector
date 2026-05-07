@@ -79,9 +79,11 @@ From the dashboard you can:
 |---|---|---|
 | `WORKER_CONCURRENCY` | 64 | How many files are processed at the same time |
 | `EMBEDDING_BATCH_SIZE` | 128 | Chunks sent per Ollama embed request |
-| `CHUNK_SIZE` | 512 | Characters per chunk |
-| `CHUNK_OVERLAP` | 50 | Overlap between consecutive chunks |
-| `STABILITY_WAIT_S` | 2 | Seconds to wait after a file appears before touching it |
+| `EMBED_CONCURRENCY` | 16 | Global cap on concurrent embed batches |
+| `UPSERT_CONCURRENCY` | 8 | Global cap on concurrent Qdrant upserts |
+| `CHUNK_SIZE` | 1024 | Characters per chunk |
+| `CHUNK_OVERLAP` | 100 | Overlap between consecutive chunks |
+| `STABILITY_WAIT_S` | 0 | Seconds to wait after a file appears before touching it (0 = disabled, fine for SFTP / atomic copies) |
 
 Higher concurrency helps when embedding is the bottleneck. If Ollama is slow, raising `EMBEDDING_BATCH_SIZE` usually helps more than raising `WORKER_CONCURRENCY`.
 

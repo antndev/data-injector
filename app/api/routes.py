@@ -314,11 +314,15 @@ async def bulk_delete(body: BulkBody, delete_physical: bool = False):
 
 @router.post("/files/bulk/retry")
 async def bulk_retry(body: BulkBody):
-    n = 0
-    for fid in body.ids:
-        try:
-            await retry_file(fid)
-            n += 1
-        except HTTPException:
-            pass
-    return {"ok": True, "queued": n}
+    sem = asyncio.Semaphore(20)
+
+    async def _one(fid: str) -> int:
+        async with sem:
+            try:
+                await retry_file(fid)
+                return 1
+            except HTTPException:
+                return 0
+
+    results = await asyncio.gather(*[_one(fid) for fid in body.ids])
+    return {"ok": True, "queued": sum(results)}
