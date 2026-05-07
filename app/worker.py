@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import json
 import logging
 import re
 import shutil
@@ -14,8 +13,9 @@ from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, P
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from ollama import AsyncClient as OllamaClient
 
+from app import openwebui
 from app.config import settings
-from app.database import connect, owui_connect
+from app.database import connect
 from app.watcher import SUPPORTED
 
 logger = logging.getLogger(__name__)
@@ -84,6 +84,7 @@ async def shutdown() -> None:
         t.cancel()
     if _running_tasks:
         await asyncio.gather(*_running_tasks, return_exceptions=True)
+    await openwebui.stop_writer()
     if _qdrant_global is not None:
         try:
             await _qdrant_global.close()
@@ -173,6 +174,9 @@ async def run_worker(inbox_queue: asyncio.Queue):
     # Global semaphores (see comment at module top — must NOT be per-file).
     _embed_sem = asyncio.Semaphore(settings.embed_concurrency)
     _upsert_sem = asyncio.Semaphore(settings.upsert_concurrency)
+
+    # Single async writer that batches OWUI sqlite commits.
+    openwebui.start_writer()
 
     await recover_crashed()
     await _ensure_qdrant_collection()
@@ -523,7 +527,7 @@ async def _embed_and_upload(
 
     async def _del_owui():
         try:
-            await _unregister_openwebui_file(file_id)
+            await openwebui.unregister(file_id)
         except Exception as e:
             logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
 
@@ -614,7 +618,7 @@ async def _embed_and_upload(
 
     await asyncio.gather(
         _do_upsert(),
-        _register_openwebui_file(file_id, filename, file_hash, file_size),
+        openwebui.register(file_id, filename, file_hash, file_size),
     )
 
     return len(points)
@@ -635,7 +639,7 @@ async def _qdrant_delete(qdrant: AsyncQdrantClient, file_id: str, filename: str)
 
     async def _del_o():
         try:
-            await _unregister_openwebui_file(file_id)
+            await openwebui.unregister(file_id)
         except Exception as e:
             logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
 
@@ -679,38 +683,8 @@ def _move(src: Path, dest_dir: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# OpenWebUI integration
+# OpenWebUI integration: see app/openwebui.py — all writes go through a
+# single batched async writer that coalesces commits over a short window
+# to avoid the global webui.db write-lock becoming a serializing
+# bottleneck across all concurrent files.
 # ---------------------------------------------------------------------------
-
-async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, size: int):
-    now = int(datetime.now(timezone.utc).timestamp())
-    meta = json.dumps({"name": filename, "content_type": "text/plain", "size": size})
-    data = json.dumps({
-        "collection_name": settings.qdrant_knowledge_base_id,
-        "content": "",
-        "metadata": {"name": filename},
-    })
-
-    async with owui_connect() as db:
-        await db.execute(
-            """INSERT OR REPLACE INTO file
-               (id, user_id, filename, meta, created_at, hash, data, updated_at, path)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
-            (file_id, settings.openwebui_user_id, filename, meta, now, file_hash, data, now, ""),
-        )
-        await db.execute("DELETE FROM knowledge_file WHERE file_id=?", (file_id,))
-        await db.execute(
-            """INSERT INTO knowledge_file
-               (id, user_id, knowledge_id, file_id, created_at, updated_at)
-               VALUES (?,?,?,?,?,?)""",
-            (str(uuid.uuid4()), settings.openwebui_user_id,
-             settings.qdrant_knowledge_base_id, file_id, now, now),
-        )
-        await db.commit()
-
-
-async def _unregister_openwebui_file(file_id: str):
-    async with owui_connect() as db:
-        await db.execute("DELETE FROM knowledge_file WHERE file_id=?", (file_id,))
-        await db.execute("DELETE FROM file WHERE id=?", (file_id,))
-        await db.commit()
