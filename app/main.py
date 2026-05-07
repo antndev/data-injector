@@ -13,7 +13,7 @@ from app import events
 from app.config import settings
 from app.database import init_db
 from app.watcher import start_watcher
-from app.worker import run_worker
+from app.worker import run_worker, shutdown as worker_shutdown
 from app.api.routes import router
 
 logging.basicConfig(
@@ -99,13 +99,19 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Shutdown order matters:
+    # 1. Stop accepting new inbox events (the watcher).
+    # 2. Cancel the worker scan loop so it doesn't enqueue more files.
+    # 3. Cancel + await every in-flight per-file processing task.
+    # 4. Close the persistent Qdrant client.
     observer.stop()
     observer.join()
     worker_task.cancel()
-
-    from app.worker import _qdrant_global
-    if _qdrant_global is not None:
-        await _qdrant_global.close()
+    try:
+        await worker_task
+    except (asyncio.CancelledError, Exception):
+        pass
+    await worker_shutdown()
 
 
 app = FastAPI(title="data-ingestor", lifespan=lifespan)

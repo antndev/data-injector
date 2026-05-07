@@ -6,12 +6,19 @@ import logging
 import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Literal
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+
+# Restrict ?status= to known values so typos don't silently return empty.
+StatusFilter = Literal[
+    "queued", "processing", "done", "failed", "duplicate", "unsupported",
+]
+_SSE_KEEPALIVE_S = 30.0
 
 from app import events
 from app.config import settings
@@ -95,9 +102,13 @@ async def logout(request: Request):
 @router.get("/events")
 async def event_stream():
     async def gen():
-        async for evt in events.subscribe():
-            yield f"data: {json.dumps(evt)}\n\n"
-            # keepalive comments are sent by clients via reconnect; nothing else needed
+        # Periodic SSE comment lines keep proxies (Caddy, nginx, browser
+        # idle-detection) from killing the connection during quiet periods.
+        async for evt in events.subscribe(idle_timeout=_SSE_KEEPALIVE_S):
+            if evt is None:
+                yield ": ping\n\n"  # SSE comment — clients ignore it
+            else:
+                yield f"data: {json.dumps(evt)}\n\n"
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
@@ -160,7 +171,7 @@ async def status():
 
 
 @router.get("/files/ids")
-async def list_file_ids(status: str | None = None, search: str | None = None):
+async def list_file_ids(status: StatusFilter | None = None, search: str | None = None):
     """Lightweight — returns only IDs (used by select-all to include unloaded rows)."""
     query = "SELECT id FROM files"
     params: list = []
@@ -181,7 +192,7 @@ async def list_file_ids(status: str | None = None, search: str | None = None):
 
 @router.get("/files")
 async def list_files(
-    status: str | None = None,
+    status: StatusFilter | None = None,
     search: str | None = None,
     offset: int = 0,
     limit: int = 200,

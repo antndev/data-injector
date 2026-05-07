@@ -15,7 +15,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from ollama import AsyncClient as OllamaClient
 
 from app.config import settings
-from app.database import connect
+from app.database import connect, owui_connect
 from app.watcher import SUPPORTED
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,10 @@ splitter = RecursiveCharacterTextSplitter(
 
 # paths currently being processed — prevents duplicate tasks for the same file
 active_paths: set[str] = set()
+
+# In-flight per-file processing tasks. Tracked so we can cancel + await them
+# cleanly on shutdown instead of leaking orphans into the event loop.
+_running_tasks: set[asyncio.Task] = set()
 
 _register_lock = asyncio.Lock()
 _inbox_queue: asyncio.Queue | None = None  # set by run_worker; used by retry endpoint
@@ -64,6 +68,27 @@ def _qdrant_client() -> AsyncQdrantClient:
     """Return the shared Qdrant client (used by routes.py too)."""
     assert _qdrant_global is not None, "Qdrant client not initialised yet"
     return _qdrant_global
+
+
+def _spawn(coro) -> asyncio.Task:
+    """Create a task and track it for clean shutdown."""
+    task = asyncio.create_task(coro)
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
+    return task
+
+
+async def shutdown() -> None:
+    """Cancel + await every in-flight processing task, then close clients."""
+    for t in list(_running_tasks):
+        t.cancel()
+    if _running_tasks:
+        await asyncio.gather(*_running_tasks, return_exceptions=True)
+    if _qdrant_global is not None:
+        try:
+            await _qdrant_global.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +185,7 @@ async def run_worker(inbox_queue: asyncio.Queue):
         proc = settings.processing_dir / row["filename"]
         if proc.exists() and str(proc) not in active_paths:
             active_paths.add(str(proc))
-            asyncio.create_task(_process_with_sem(sem, proc, row["id"]))
+            _spawn(_process_with_sem(sem, proc, row["id"]))
 
     # Initial inbox sweep
     inbox_queue.put_nowait(None)
@@ -170,19 +195,31 @@ async def run_worker(inbox_queue: asyncio.Queue):
         while not inbox_queue.empty():
             inbox_queue.get_nowait()
 
-        for path in settings.inbox_dir.iterdir():
-            if not path.is_file():
-                continue
-            key = str(path)
-            if key in active_paths:
-                continue
-            active_paths.add(key)
-            file_id = await _register_as_queued(path)
-            if file_id is None:
-                # File vanished before we could register it (rare but possible).
-                active_paths.discard(key)
-                continue
-            asyncio.create_task(_process_with_sem(sem, path, file_id))
+        # Wrap the scan so that a single bad file (e.g. a permission error
+        # on stat) can never take the whole worker offline. Without this,
+        # any uncaught exception here turns the app into a silent zombie
+        # — dashboard up, queue full, nothing being processed.
+        try:
+            for path in settings.inbox_dir.iterdir():
+                if not path.is_file():
+                    continue
+                key = str(path)
+                if key in active_paths:
+                    continue
+                active_paths.add(key)
+                try:
+                    file_id = await _register_as_queued(path)
+                except Exception:
+                    active_paths.discard(key)
+                    logger.exception("Failed to register %s — skipping", path.name)
+                    continue
+                if file_id is None:
+                    # File vanished before we could register it.
+                    active_paths.discard(key)
+                    continue
+                _spawn(_process_with_sem(sem, path, file_id))
+        except Exception:
+            logger.exception("Inbox scan failed — continuing")
 
 
 async def _process_with_sem(sem: asyncio.Semaphore, path: Path, file_id: str):
@@ -633,7 +670,7 @@ async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, 
         "metadata": {"name": filename},
     })
 
-    async with aiosqlite.connect("/openwebui-data/webui.db") as db:
+    async with owui_connect() as db:
         await db.execute(
             """INSERT OR REPLACE INTO file
                (id, user_id, filename, meta, created_at, hash, data, updated_at, path)
@@ -652,7 +689,7 @@ async def _register_openwebui_file(file_id: str, filename: str, file_hash: str, 
 
 
 async def _unregister_openwebui_file(file_id: str):
-    async with aiosqlite.connect("/openwebui-data/webui.db") as db:
+    async with owui_connect() as db:
         await db.execute("DELETE FROM knowledge_file WHERE file_id=?", (file_id,))
         await db.execute("DELETE FROM file WHERE id=?", (file_id,))
         await db.commit()

@@ -43,14 +43,24 @@ def clear_buffer():
     _buffer.clear()
 
 
-async def subscribe() -> AsyncIterator[dict]:
+async def subscribe(idle_timeout: float | None = None) -> AsyncIterator[dict | None]:
+    """Yield events as they arrive. When `idle_timeout` is set, yield `None`
+    after that many seconds of silence — the SSE handler turns those into
+    keepalive comment lines so intermediate proxies don't kill the
+    connection during quiet periods."""
     q: asyncio.Queue = asyncio.Queue(maxsize=200)
     _subscribers.add(q)
     try:
         for evt in list(_buffer):
             yield evt
         while True:
-            yield await q.get()
+            if idle_timeout is None:
+                yield await q.get()
+                continue
+            try:
+                yield await asyncio.wait_for(q.get(), timeout=idle_timeout)
+            except asyncio.TimeoutError:
+                yield None  # caller should send a keepalive
     finally:
         _subscribers.discard(q)
 

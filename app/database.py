@@ -1,4 +1,8 @@
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+
 import aiosqlite
+
 from app.config import settings
 
 _CREATE = """
@@ -23,11 +27,35 @@ CREATE INDEX IF NOT EXISTS idx_created_at ON files(created_at);
 """
 
 
-async def init_db():
+# 5 second busy_timeout: SQLite blocks until the lock frees, instead of
+# erroring with "database is locked" the moment two connections collide.
+# WAL mode allows concurrent readers + a single writer with no readers
+# blocking each other — the right default for a dashboard + worker setup.
+_BUSY_TIMEOUT_MS = 5000
+
+
+async def init_db() -> None:
     async with aiosqlite.connect(settings.db_path) as db:
+        # Mode persists across restarts once set on the database file.
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")  # safe + faster with WAL
         await db.executescript(_CREATE)
         await db.commit()
 
 
-def connect():
-    return aiosqlite.connect(settings.db_path)
+@asynccontextmanager
+async def connect() -> AsyncIterator[aiosqlite.Connection]:
+    """Open a connection to the main DB with sane defaults baked in."""
+    async with aiosqlite.connect(settings.db_path) as db:
+        await db.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        yield db
+
+
+@asynccontextmanager
+async def owui_connect() -> AsyncIterator[aiosqlite.Connection]:
+    """Open a connection to the shared OpenWebUI database with the same
+    busy_timeout — both we and openwebui itself write to webui.db, and
+    without this writes can collide and error immediately."""
+    async with aiosqlite.connect("/openwebui-data/webui.db") as db:
+        await db.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+        yield db
