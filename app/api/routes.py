@@ -1,4 +1,5 @@
 import json
+import re
 import secrets
 import shutil
 import asyncio
@@ -14,12 +15,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-# Restrict ?status= to known values so typos don't silently return empty.
-StatusFilter = Literal[
-    "queued", "processing", "done", "failed", "duplicate", "unsupported",
-]
-_SSE_KEEPALIVE_S = 30.0
-
 from app import events
 from app.config import settings
 from app.database import connect
@@ -29,11 +24,53 @@ router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 audit = logging.getLogger("audit")
 
+# Restrict ?status= to known values so typos don't silently return empty.
+StatusFilter = Literal[
+    "queued", "processing", "done", "failed", "duplicate", "unsupported",
+]
+_SSE_KEEPALIVE_S = 30.0
+
+# Reject obviously-malformed file IDs with a clean 400 instead of letting
+# them produce SQL no-ops or template errors.
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def _check_uuid(file_id: str) -> None:
+    if not _UUID_RE.match(file_id):
+        raise HTTPException(400, "Invalid file id")
+
+
+def _client_ip(request: Request) -> str:
+    """Real client IP behind the Caddy reverse proxy.
+
+    Caddy sets X-Forwarded-For. Without honouring it the rate limiter
+    saw only the proxy IP, so one user's 5 wrong attempts would lock
+    out *every* user for 5 minutes. Trusting the header is safe here
+    because the app runs only behind Caddy (the session cookie is set
+    https_only and the container isn't exposed directly).
+    """
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        # Original client is the first hop; subsequent entries are proxies.
+        return xff.split(",")[0].strip() or "?"
+    return request.client.host if request.client else "?"
+
+
 _MAX_ATTEMPTS = 5
 _LOCKOUT_SECONDS = 300
+_RATE_MAX_ENTRIES = 5000  # cap memory growth from spammy probers
 
 # IP → (failure_count, locked_until_timestamp)
 _rate: dict[str, tuple[int, float]] = defaultdict(lambda: (0, 0.0))
+
+
+def _gc_rate(now: float) -> None:
+    """Drop stale entries (no failures + not locked) to keep the table
+    bounded under attack from many unique IPs."""
+    if len(_rate) < _RATE_MAX_ENTRIES:
+        return
+    for ip in [ip for ip, (c, until) in _rate.items() if c == 0 and until <= now]:
+        del _rate[ip]
 
 
 def _is_locked(ip: str) -> tuple[bool, int]:
@@ -54,7 +91,7 @@ def _record_failure(ip: str) -> int:
 
 
 def _reset(ip: str) -> None:
-    _rate[ip] = (0, 0.0)
+    _rate.pop(ip, None)
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -70,7 +107,8 @@ async def login_page(request: Request, error: str | None = None):
 
 @router.post("/login")
 async def login(request: Request, password: str = Form(default="")):
-    ip = request.client.host if request.client else "?"
+    ip = _client_ip(request)
+    _gc_rate(time.time())
 
     locked, remaining = _is_locked(ip)
     if locked:
@@ -92,7 +130,7 @@ async def login(request: Request, password: str = Form(default="")):
 
 @router.post("/logout")
 async def logout(request: Request):
-    ip = request.client.host if request.client else "?"
+    ip = _client_ip(request)
     audit.info("logout from %s", ip)
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
@@ -130,6 +168,7 @@ async def clear_events():
 @router.get("/files/{file_id}/error")
 async def get_file_error(file_id: str):
     """Return the saved error message for a failed file."""
+    _check_uuid(file_id)
     async with connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -219,6 +258,7 @@ async def list_files(
 
 @router.get("/files/{file_id}")
 async def get_file(file_id: str):
+    _check_uuid(file_id)
     async with connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM files WHERE id=?", (file_id,)) as cur:
@@ -230,6 +270,7 @@ async def get_file(file_id: str):
 
 @router.delete("/files/{file_id}")
 async def delete_file(file_id: str, delete_physical: bool = False):
+    _check_uuid(file_id)
     async with connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM files WHERE id=?", (file_id,)) as cur:
@@ -266,6 +307,7 @@ async def delete_file(file_id: str, delete_physical: bool = False):
 
 @router.post("/files/{file_id}/retry")
 async def retry_file(file_id: str):
+    _check_uuid(file_id)
     async with connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM files WHERE id=?", (file_id,)) as cur:
@@ -286,11 +328,18 @@ async def retry_file(file_id: str):
     while dest.exists():
         dest = settings.inbox_dir / f"{src.stem}_{counter}{src.suffix}"
         counter += 1
-    shutil.move(str(src), dest)
+    try:
+        shutil.move(str(src), dest)
+    except FileNotFoundError:
+        # Concurrent retry / delete won the race — surface 409 instead of 500.
+        raise HTTPException(409, "File already moved by a concurrent request")
 
     err = settings.failed_dir / (row["filename"] + ".error")
     if err.exists():
-        err.unlink()
+        try:
+            err.unlink()
+        except OSError:
+            pass
 
     async with connect() as db:
         await db.execute(

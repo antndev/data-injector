@@ -117,6 +117,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="data-ingestor", lifespan=lifespan)
 
 
+def _real_ip(request: Request) -> str:
+    """X-Forwarded-For aware client IP (Caddy is the only ingress)."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip() or "?"
+    return request.client.host if request.client else "?"
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -124,8 +132,7 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if request.session.get("authed"):
         return await call_next(request)
-    audit.warning("unauth: %s %s from %s", request.method, path,
-                  request.client.host if request.client else "?")
+    audit.warning("unauth: %s %s from %s", request.method, path, _real_ip(request))
     if path == "/" or request.headers.get("accept", "").startswith("text/html"):
         return RedirectResponse("/login", status_code=303)
     return JSONResponse({"detail": "auth required"}, status_code=401)

@@ -164,6 +164,9 @@ async def run_worker(inbox_queue: asyncio.Queue):
         port=settings.qdrant_port,
         api_key=settings.qdrant_api_key,
         https=False,
+        # Generous timeout: bge-m3 batch upserts can be a few hundred MB
+        # of payload, and Qdrant compaction occasionally pauses requests.
+        timeout=60,
     )
     _ollama_global = OllamaClient(host=settings.ollama_host)
 
@@ -186,6 +189,9 @@ async def run_worker(inbox_queue: asyncio.Queue):
         if proc.exists() and str(proc) not in active_paths:
             active_paths.add(str(proc))
             _spawn(_process_with_sem(sem, proc, row["id"]))
+
+    # Belt-and-braces in case the OS-level watcher misses an event.
+    _spawn(_periodic_rescan())
 
     # Initial inbox sweep
     inbox_queue.put_nowait(None)
@@ -439,6 +445,21 @@ async def _delayed_nudge(seconds: int):
     await asyncio.sleep(seconds)
     if _inbox_queue is not None:
         _inbox_queue.put_nowait(None)
+
+
+async def _periodic_rescan(every_s: int = 60):
+    """Belt-and-braces: rescan the inbox at a slow tick so files aren't
+    stranded if the watchdog Observer thread silently dies (rare but it
+    has happened in production with mounted shares / SFTP)."""
+    while True:
+        try:
+            await asyncio.sleep(every_s)
+            if _inbox_queue is not None:
+                _inbox_queue.put_nowait(None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Periodic rescan tick failed (continuing)")
 
 
 async def _set_status(file_id: str, status: str):
