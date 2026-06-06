@@ -512,7 +512,7 @@ const I18N={
   'm.retryTitle':'Dateien erneut verarbeiten','m.retryMsg':'{n} {files} erneut verarbeiten?',
   'm.delTitle':'Dateien löschen','m.delMsg':'{n} {files} löschen?\nEndgültig aus Knowledge Base, Datenbank und Festplatte entfernt.',
   'm.delOneTitle':'Datei löschen','m.delOneMsg':'Endgültig aus Knowledge Base, Datenbank und Festplatte entfernt.',
-  'm.purgeTitle':'Alle {label} löschen','m.purgeMsg':'{n} Dateien werden endgültig von Festplatte, Datenbank und Knowledge Base entfernt.',
+  'm.purgeTitle':'Alle {label} löschen','m.purgeMsg':'{n} {files} werden endgültig von Festplatte, Datenbank und Knowledge Base entfernt.',
   'lbl.failed':'fehlgeschlagenen Dateien','lbl.dup':'Duplikate','lbl.uns':'nicht unterstützten Dateien',
   'm.diffTitle':'Andere Datei','m.diffMsg':'Die gewählte Datei passt nicht zur fortzusetzenden — bitte als neuen Upload starten.',
   'failedTitle':'Fehlgeschlagen: {name}',
@@ -535,7 +535,7 @@ const I18N={
   'm.retryTitle':'Retry files','m.retryMsg':'Retry {n} {files}?',
   'm.delTitle':'Delete files','m.delMsg':'Delete {n} {files}?\nPermanently removed from knowledge base, database and disk.',
   'm.delOneTitle':'Delete file','m.delOneMsg':'Permanently removed from knowledge base, database and disk.',
-  'm.purgeTitle':'Delete all {label}','m.purgeMsg':'{n} files will be permanently removed from disk, database and knowledge base.',
+  'm.purgeTitle':'Delete all {label}','m.purgeMsg':'{n} {files} will be permanently removed from disk, database and knowledge base.',
   'lbl.failed':'failed files','lbl.dup':'duplicates','lbl.uns':'unsupported files',
   'm.diffTitle':'Different file','m.diffMsg':'The file you picked doesn’t match the one being resumed — start it as a new upload instead.',
   'failedTitle':'Failed: {name}',
@@ -902,7 +902,7 @@ async function deleteWithProgress(ids){
       const res=await fetch('/files/bulk/delete?delete_physical=true',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({ids:batch})
-      }).then(r=>r.json());
+      }).then(r=>{if(!r.ok)throw new Error('delete '+r.status);return r.json();});
       done+=res.deleted??batch.length;
       to.progress(t('toast.deleting'),done,total);
     }
@@ -932,7 +932,8 @@ async function del(id){
   if(!await showModal(t('m.delOneTitle'),t('m.delOneMsg')))return;
   const to=makeToast();to.reset();to.progress(t('toast.deleting'),0,1);
   try{
-    await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
+    const r=await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
+    if(!r.ok)throw new Error('delete '+r.status);
     to.done(t('toast.filedel'));
   }catch(e){to.error(t('toast.delfail'));}
   load();
@@ -943,7 +944,7 @@ async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 async function purgeByStatus(status,countId,labelKey){
   const n=parseInt($(countId).textContent)||0;
   if(!n)return;
-  if(!await showModal(tf('m.purgeTitle',{label:t(labelKey)}),tf('m.purgeMsg',{n})))return;
+  if(!await showModal(tf('m.purgeTitle',{label:t(labelKey)}),tf('m.purgeMsg',{n,files:fileWord(n)})))return;
   const ids=await fetch(idsQS(status)).then(r=>r.json());
   if(!ids.length)return;
   await deleteWithProgress(ids);
@@ -1130,7 +1131,13 @@ load();
   const fmtBytes=b=>{if(b<1024)return (b|0)+' B';const u=['KB','MB','GB','TB'];let i=-1;do{b/=1024;i++}while(b>=1024&&i<u.length-1);return b.toFixed(b<10?1:0)+' '+u[i];};
   const fmtEta=s=>{if(!isFinite(s)||s<0)return '—';if(s<60)return Math.ceil(s)+'s';if(s<3600)return Math.round(s/60)+'m';return Math.round(s/3600)+'h';};
   const fpOf=f=>`${f.name}:${f.size}:${f.lastModified}`;
-  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  // Abortable sleep: a cancel/abort wakes it immediately (rejecting with
+  // AbortError) instead of leaving a job parked in backoff for up to 15s.
+  const sleep=(ms,signal)=>new Promise((res,rej)=>{
+    const id=setTimeout(res,ms);
+    if(signal){if(signal.aborted){clearTimeout(id);return rej(new DOMException('aborted','AbortError'));}
+      signal.addEventListener('abort',()=>{clearTimeout(id);rej(new DOMException('aborted','AbortError'));},{once:true});}
+  });
   // Hash files up to this size locally (SHA-256) to skip re-uploading content
   // that is already indexed. Larger files skip the pre-check and rely on the
   // server-side dedup after upload (avoids loading huge files into memory).
@@ -1180,12 +1187,14 @@ load();
     updateUI();
   }
 
+  const stopped=j=>cancelled||(j.ctrl&&j.ctrl.signal.aborted);  // per-job: survives the global flag reset
   async function uploadJob(j){
-    if(cancelled)throw new Error('cancelled');
-    // Early duplicate skip: if this exact content is already indexed (or in
-    // flight), don't upload it at all. Best-effort — any failure falls through
-    // to a normal upload, where the server dedups anyway.
-    if(j.offset===0){
+    if(stopped(j))throw new Error('cancelled');
+    // Early duplicate skip: if this exact content is already indexed, don't
+    // upload it. Skipped for a RESUME (j.resumed) — a resumed file has a live
+    // server partial and isn't ingested yet, so re-hashing the whole thing is
+    // pure waste. Best-effort — any failure falls through to a normal upload.
+    if(j.offset===0&&!j.resumed){
       try{
         const hash=await sha256Hex(j.file);
         if(hash){
@@ -1194,7 +1203,7 @@ load();
         }
       }catch{}
     }
-    if(cancelled)throw new Error('cancelled');
+    if(stopped(j))throw new Error('cancelled');
     // Create or resume on the server (idempotent by fingerprint → true offset).
     const cr=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
@@ -1204,16 +1213,16 @@ load();
 
     let retry=0,recreated=0;
     while(j.offset<j.size){
-      if(cancelled)throw new Error('cancelled');
+      if(stopped(j))throw new Error('cancelled');
       const blob=j.file.slice(j.offset,j.offset+CHUNK);
       let r;
       try{
         r=await fetch('/uploads/'+j.uploadId,{method:'PATCH',
           headers:{'Upload-Offset':String(j.offset),'Content-Type':'application/offset+octet-stream'},body:blob,signal:j.ctrl.signal});
       }catch(netErr){
-        if(cancelled||netErr.name==='AbortError')throw netErr;  // stop, don't retry
+        if(stopped(j)||netErr.name==='AbortError')throw netErr;  // stop, don't retry
         if(++retry>MAX_RETRY)throw netErr;
-        await sleep(Math.min(15000,500*2**retry));continue;   // backoff, chunk re-sliceable
+        await sleep(Math.min(15000,500*2**retry),j.ctrl.signal);continue;   // backoff, abortable
       }
       retry=0;
       if(r.status===204||r.status===409){
@@ -1226,9 +1235,10 @@ load();
         // Server dropped the partial (TTL/cancel). Recreate — but cap it so a
         // structural 404 can't busy-loop resending the whole file forever.
         if(++recreated>2)throw new Error('upload keeps disappearing server-side');
-        await sleep(1000);
+        if(stopped(j))throw new Error('cancelled');     // don't recreate a cancelled upload
+        await sleep(1000,j.ctrl.signal);
         const c2=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp})});
+          body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
         if(!c2.ok)throw new Error('recreate '+c2.status);
         const cc=await c2.json();j.uploadId=cc.upload_id;j.offset=cc.offset;await jobPut(serial(j));
       }else{
@@ -1265,18 +1275,19 @@ load();
     upLabel.textContent=t('up.cancelled');upStats.textContent='';upPct.textContent='';
     // Best-effort: drop the server-side partials and our local records.
     await Promise.allSettled(snap.map(async j=>{
-      jobDel(j.fp).catch(()=>{});
+      await jobDel(j.fp).catch(()=>{});
       if(j.uploadId){try{await _origFetch('/uploads/'+j.uploadId,{method:'DELETE'});}catch{}}
     }));
-    cancelled=false;   // AbortError handling stops in-flight jobs regardless
+    cancelled=false;   // per-job signal (stopped()) still halts the aborted jobs
+    schedule();        // flush anything the user enqueued during the cancel window
     setTimeout(()=>{if(!jobs.size&&!running){upProgress.classList.remove('show');upBar.classList.remove('err');}},2000);
     refreshResumeChips();
   }
 
-  async function enqueue(file,handle){
+  async function enqueue(file,handle,resumed){
     const fp=fpOf(file);
     if(jobs.has(fp))return;
-    const j={file,handle:handle||null,fp,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,uploadId:null,state:'wait'};
+    const j={file,handle:handle||null,fp,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,uploadId:null,state:'wait',resumed:!!resumed};
     jobs.set(fp,j);await jobPut(serial(j));
     showProg();schedule();
   }
@@ -1320,27 +1331,28 @@ load();
   // ── Resume after refresh / browser restart ──
   function pickOne(){return new Promise(res=>{const inp=document.createElement('input');inp.type='file';inp.onchange=()=>res(inp.files[0]||null);inp.click();});}
   async function resumeSaved(s,chip){
-    let file=null;
+    let file=null,handle=null;
     if(s.handle){
       try{
         let perm=await s.handle.queryPermission({mode:'read'});
         if(perm!=='granted')perm=await s.handle.requestPermission({mode:'read'});  // needs the click gesture
-        if(perm==='granted')file=await s.handle.getFile();
+        if(perm==='granted'){file=await s.handle.getFile();handle=s.handle;}
       }catch(e){console.error('handle',e);}
     }
-    if(!file)file=await pickOne();
+    if(!file)file=await pickOne();   // re-select fallback: no live handle to keep
     if(!file)return;
     if(fpOf(file)!==s.fp){await showModal(t('m.diffTitle'),t('m.diffMsg'),t('close'),false);return;}
     chip.remove();
-    await enqueue(file,s.handle||null);
+    await enqueue(file,handle,true);   // resumed=true → skip the redundant dedup re-hash
   }
   async function refreshResumeChips(){
     resumeBar.innerHTML='';
     let saved=[];try{saved=await jobAll();}catch{return;}
     for(const s of saved){
       if(jobs.has(s.fp))continue;
-      let off=0,exists=true;
-      try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;}catch{}
+      let off=0,exists=true,reachable=true;
+      try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;else reachable=false;}catch{reachable=false;}
+      if(!reachable)continue;                       // transient error — don't show a bogus 0% chip; retry next refresh
       if(!exists||off>=s.size){await jobDel(s.fp);continue;}
       const pct=s.size>0?Math.round(off/s.size*100):0;
       const chip=document.createElement('div');chip.className='resume-chip';
