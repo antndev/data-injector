@@ -187,21 +187,37 @@ async def run_worker(inbox_queue: asyncio.Queue):
     # Single async writer that batches OWUI sqlite commits.
     openwebui.start_writer()
 
-    await recover_crashed()
-    await _ensure_qdrant_collection()
+    # Startup steps must NEVER take the worker down: a transient Qdrant error or
+    # a config/collection mismatch used to raise here and kill run_worker, so
+    # uploads landed in the inbox but nothing was ever scanned or processed
+    # (dashboard stuck at zero). Log loudly and keep going — the processing loop
+    # below is what matters.
+    try:
+        await recover_crashed()
+    except Exception:
+        logger.exception("Startup recovery failed — continuing")
+    try:
+        await _ensure_qdrant_collection()
+    except Exception:
+        logger.exception("Qdrant collection setup failed — continuing; files will "
+                         "still be scanned and processed (upserts may fail until fixed)")
 
     sem = asyncio.Semaphore(settings.worker_concurrency)
 
-    # Resume queued files that are already in the processing dir
-    async with connect() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT id, filename FROM files WHERE status='queued'") as cur:
-            queued = await cur.fetchall()
-    for row in queued:
-        proc = settings.processing_dir / row["filename"]
-        if proc.exists() and str(proc) not in active_paths:
-            active_paths.add(str(proc))
-            _spawn(_process_with_sem(sem, proc, row["id"]))
+    # Resume queued files that are already in the processing dir. Wrapped so a
+    # hiccup here can't stop the worker from reaching its scan loop below.
+    try:
+        async with connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT id, filename FROM files WHERE status='queued'") as cur:
+                queued = await cur.fetchall()
+        for row in queued:
+            proc = settings.processing_dir / row["filename"]
+            if proc.exists() and str(proc) not in active_paths:
+                active_paths.add(str(proc))
+                _spawn(_process_with_sem(sem, proc, row["id"]))
+    except Exception:
+        logger.exception("Resuming queued files failed — continuing")
 
     # Belt-and-braces in case the OS-level watcher misses an event.
     _spawn(_periodic_rescan())
@@ -747,10 +763,19 @@ async def _ensure_qdrant_collection():
         params = info.config.params.vectors
         size = getattr(params, "size", None)
         if size is not None and size != settings.embedding_dimensions:
-            raise RuntimeError(
-                f"Qdrant collection '{settings.qdrant_collection}' has vector "
-                f"size {size} but EMBEDDING_DIMENSIONS={settings.embedding_dimensions}. "
-                f"Drop and recreate the collection, or fix EMBEDDING_DIMENSIONS."
+            # WARN, never fatal: what actually has to match is the embedding
+            # MODEL's output dimension and the collection size. EMBEDDING_DIMENSIONS
+            # only sizes a freshly-created collection. If the model already emits
+            # vectors matching the existing collection, ingestion works fine
+            # despite this config drift; if not, individual upserts fail (files
+            # land in 'failed') — which is visible and recoverable. Killing the
+            # whole worker here would silently stop ALL processing instead.
+            logger.error(
+                "Qdrant collection '%s' has vector size %s but EMBEDDING_DIMENSIONS=%s. "
+                "Ingestion continues; if the model's real dimension differs from the "
+                "collection, upserts will fail — align EMBEDDING_DIMENSIONS (it should "
+                "match your embedding model, e.g. 1024 for bge-m3) or recreate the collection.",
+                settings.qdrant_collection, size, settings.embedding_dimensions,
             )
 
     # A keyword payload index on metadata.file_id turns every delete-by-file_id
