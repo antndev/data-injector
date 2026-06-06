@@ -480,9 +480,6 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       <span class="v" id="r-eta">—</span>
       <span class="l" data-i18n="rate.eta">ETA</span>
     </div>
-    <div class="rate tput">
-      <span data-i18n="rate.session">Sitzung ·</span> <b id="r-min-in">0</b> <span data-i18n="rate.up">hoch</span> · <b id="r-min-out">0</b> <span data-i18n="rate.done">fertig</span>
-    </div>
   </div>
 
   <div class="scroll">
@@ -539,7 +536,7 @@ const I18N={
   'cleanup':'Aufräumen','cleanup.failed':'Alle fehlgeschlagenen löschen','cleanup.dup':'Alle Duplikate löschen','cleanup.uns':'Alle nicht unterstützten löschen',
   'dz.text':'Dateien/Ordner ziehen oder klicken','dz.files':'Dateien','dz.folder':'Ordner','activity':'Aktivität','clear':'Leeren',
   'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden','lang.switch':'Sprache wechseln',
-  'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.session':'Sitzung ·','rate.up':'hoch','rate.done':'fertig','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
+  'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
   'th.filename':'Dateiname','th.status':'Status','th.chunks':'Chunks','th.size':'Größe','th.date':'Datum',
   'empty':'Keine Dateien','cancel':'Abbrechen','delete':'Löschen','close':'Schließen','retry':'Erneut','why':'Warum?',
   'status.queued':'Warteschlange','status.processing':'In Arbeit','status.done':'Fertig','status.failed':'Fehlgeschlagen','status.duplicate':'Duplikat','status.unsupported':'Nicht unterstützt','status.deleted':'Gelöscht',
@@ -562,7 +559,7 @@ const I18N={
   'cleanup':'Cleanup','cleanup.failed':'Delete all failed','cleanup.dup':'Delete all duplicates','cleanup.uns':'Delete all unsupported',
   'dz.text':'Drag or click to add files/folders','dz.files':'Files','dz.folder':'Folder','activity':'Activity','clear':'Clear',
   'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out','lang.switch':'Switch language',
-  'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.session':'Session ·','rate.up':'up','rate.done':'done','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
+  'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
   'th.filename':'Filename','th.status':'Status','th.chunks':'Chunks','th.size':'Size','th.date':'Date',
   'empty':'No files','cancel':'Cancel','delete':'Delete','close':'Close','retry':'Retry','why':'Why?',
   'status.queued':'Queued','status.processing':'Processing','status.done':'Done','status.failed':'Failed','status.duplicate':'Duplicate','status.unsupported':'Unsupported','status.deleted':'Deleted',
@@ -615,7 +612,16 @@ function setLang(lang){if(!LANG_NAMES[lang]||lang===LANG)return;LANG=lang;localS
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 const dtLoc=()=>LANG==='de'?'de-DE':'en-US';   // dates follow the chosen UI language
-const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date(),L=dtLoc();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString(L,{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString(L,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString(L,{hour:'2-digit',minute:'2-digit'})};
+// today → time · this year → day+month · older → day+month+year. Full
+// timestamp on hover via dtFull(). Follows the chosen UI language (dtLoc).
+const dt=s=>{
+  if(!s)return'—';
+  const d=new Date(s),now=new Date(),L=dtLoc();
+  if(d.toDateString()===now.toDateString())   return d.toLocaleTimeString(L,{hour:'2-digit',minute:'2-digit'});
+  if(d.getFullYear()===now.getFullYear())     return d.toLocaleDateString(L,{day:'numeric',month:'short'});
+  return d.toLocaleDateString(L,{day:'numeric',month:'short',year:'numeric'});
+};
+const dtFull=s=>{if(!s)return'';try{return new Date(s).toLocaleString(dtLoc());}catch{return''}};
 
 // When delete-after-ingest is on, a failed file's bytes are gone, so it can't
 // be retried from disk — you re-upload instead. Hide the retry affordances.
@@ -703,7 +709,7 @@ function makeRow(f){
     `<td><span class="badge ${f.status}">${esc(t('status.'+f.status)||f.status)}</span></td>`+
     `<td class="muted">${f.qdrant_chunk_count??'—'}</td>`+
     `<td class="muted">${sz(f.file_size_bytes)}</td>`+
-    `<td class="dim">${dt(f.ingested_at||f.created_at)}</td>`+
+    `<td class="dim" title="${esc(dtFull(f.ingested_at||f.created_at))}">${dt(f.ingested_at||f.created_at)}</td>`+
     `<td><div class="actions">${rowActions(f)}</div></td>`;
   return tr;
 }
@@ -1015,7 +1021,6 @@ const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);   // ~120s
 const REPLAY_CUTOFF_MS=10_000;      // ignore SSE-replay events older than this
 
 const inEvents=[],outEvents=[];
-let totalIn=0,totalOut=0;
 
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
 buildSpark('spark-in');buildSpark('spark-out');
@@ -1027,8 +1032,8 @@ function trackEvent(msg,t){
   const evtTs=t?new Date(t).getTime():Date.now();
   if(Date.now()-evtTs>REPLAY_CUTOFF_MS) return;
 
-  if(/^Queued:/.test(msg)){inEvents.push(evtTs);totalIn++;}
-  else if(/^Done:/.test(msg)||/^Failed:/.test(msg)){outEvents.push(evtTs);totalOut++;}
+  if(/^Queued:/.test(msg))inEvents.push(evtTs);
+  else if(/^Done:/.test(msg)||/^Failed:/.test(msg))outEvents.push(evtTs);
 }
 function prune(a){const c=Date.now()-PRUNE_HORIZON_MS;while(a.length&&a[0]<c)a.shift();}
 function liveRate(arr,tau){
@@ -1064,8 +1069,6 @@ function updateRates(){
   const rOutEta=liveRate(outEvents,TAU_ETA);     // smoother for ETA
   $('r-in').textContent=rIn.toFixed(1);
   $('r-out').textContent=rOut.toFixed(1);
-  $('r-min-in').textContent=totalIn;
-  $('r-min-out').textContent=totalOut;
   const remaining=(parseInt($('c-queued').textContent)||0)+(parseInt($('c-processing').textContent)||0);
   // Compute desired state, then only mutate DOM if it changed. Rewriting
   // the inner HTML every tick would destroy the <span class="info"> node
@@ -1389,8 +1392,11 @@ load();
     let file=null,handle=null;
     if(s.handle){
       try{
-        let perm=await s.handle.queryPermission({mode:'read'});
-        if(perm!=='granted')perm=await s.handle.requestPermission({mode:'read'});  // needs the click gesture
+        // requestPermission directly: returns 'granted' without a prompt if
+        // already granted, else prompts. Calling queryPermission first and
+        // awaiting it can consume the click's user-activation and make the
+        // prompt throw — which then wrongly fell back to re-selecting the file.
+        const perm=await s.handle.requestPermission({mode:'read'});
         if(perm==='granted'){file=await s.handle.getFile();handle=s.handle;}
       }catch(e){console.error('handle',e);}
     }
@@ -1448,7 +1454,7 @@ load();
       if(!hasDir)return;
       try{dir=await window.showDirectoryPicker();}catch{return;}
     }else{
-      try{let p=await dir.queryPermission({mode:'read'});if(p!=='granted')p=await dir.requestPermission({mode:'read'});if(p!=='granted')return;}
+      try{const p=await dir.requestPermission({mode:'read'});if(p!=='granted')return;}  // direct: keeps the click gesture
       catch(e){console.error('dir perm',e);return;}
     }
     // re-walk the directory ONCE → map fp → {file,handle}; one grant covers all files
