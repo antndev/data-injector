@@ -279,8 +279,9 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 
 /* upload drop zone (sidebar) */
 .dz-wrap{border-top:1px solid var(--line);padding:10px 0 8px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+.dz-pick{position:relative;margin:0 12px}
 #drop-zone{
-  margin:0 12px;padding:10px 14px;
+  padding:10px 14px;
   border:1.5px dashed var(--line);border-radius:8px;
   display:flex;align-items:center;gap:10px;
   cursor:pointer;transition:border-color .15s,background .15s,opacity .15s;
@@ -291,13 +292,19 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 #drop-zone:hover svg,#drop-zone.drag svg{color:var(--blue)}
 #drop-zone .dz-text{font-size:12px;color:var(--mute)}
 #dz-input,#dz-dir{display:none}
-.dz-actions{margin:2px 12px 0;display:flex;align-items:center;gap:8px}
-.dz-actions button{
-  background:none;border:0;color:var(--mute);font:inherit;font-size:11px;
-  cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;
+/* click-the-field menu: pick files OR a folder (a native dialog can't do both) */
+#dz-menu{
+  position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.5);overflow:hidden;
+  display:none;flex-direction:column;animation:pop .12s ease-out;
 }
-.dz-actions button:hover{color:var(--blue)}
-.dz-sep{color:var(--dim);font-size:11px}
+#dz-menu.show{display:flex}
+#dz-menu button{
+  background:none;border:0;color:var(--text);font:inherit;font-size:13px;
+  text-align:left;padding:9px 14px;cursor:pointer;
+}
+#dz-menu button:hover{background:var(--hover);color:var(--blue)}
 .up-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
 #up-cancel{
   background:none;border:0;color:var(--dim);font:inherit;font-size:11px;
@@ -358,20 +365,21 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
     </button>
   </div>
   <div class="dz-wrap">
-    <div id="drop-zone">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/>
-        <line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      <div class="dz-text" data-i18n="dz.text">Dateien/Ordner hierher ziehen</div>
-      <input id="dz-input" type="file" multiple>
-      <input id="dz-dir" type="file" webkitdirectory multiple>
-    </div>
-    <div class="dz-actions">
-      <button id="pick-files" type="button" data-i18n="dz.files">Dateien wählen</button>
-      <span class="dz-sep">·</span>
-      <button id="pick-folder" type="button" data-i18n="dz.folder">Ordner wählen</button>
+    <div class="dz-pick">
+      <div id="drop-zone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <div class="dz-text" data-i18n="dz.text">Dateien/Ordner ziehen oder klicken</div>
+        <input id="dz-input" type="file" multiple>
+        <input id="dz-dir" type="file" webkitdirectory multiple>
+      </div>
+      <div id="dz-menu">
+        <button id="menu-files" type="button" data-i18n="dz.files">Dateien</button>
+        <button id="menu-folder" type="button" data-i18n="dz.folder">Ordner</button>
+      </div>
     </div>
     <div id="resume-bar"></div>
     <div id="upload-progress">
@@ -491,7 +499,7 @@ const I18N={
  de:{
   'nav.all':'Alle','nav.queued':'Warteschlange','nav.processing':'In Arbeit','nav.done':'Fertig','nav.failed':'Fehlgeschlagen','nav.duplicate':'Duplikate','nav.unsupported':'Nicht unterstützt',
   'cleanup':'Aufräumen','cleanup.failed':'Alle fehlgeschlagenen löschen','cleanup.dup':'Alle Duplikate löschen','cleanup.uns':'Alle nicht unterstützten löschen',
-  'dz.text':'Dateien/Ordner hierher ziehen','dz.files':'Dateien wählen','dz.folder':'Ordner wählen','activity':'Aktivität','clear':'Leeren',
+  'dz.text':'Dateien/Ordner ziehen oder klicken','dz.files':'Dateien','dz.folder':'Ordner','activity':'Aktivität','clear':'Leeren',
   'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden','lang.switch':'Sprache wechseln',
   'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.session':'Sitzung ·','rate.up':'hoch','rate.done':'fertig','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
   'th.filename':'Dateiname','th.status':'Status','th.chunks':'Chunks','th.size':'Größe','th.date':'Datum',
@@ -514,7 +522,7 @@ const I18N={
  en:{
   'nav.all':'All','nav.queued':'Queued','nav.processing':'Processing','nav.done':'Done','nav.failed':'Failed','nav.duplicate':'Duplicates','nav.unsupported':'Unsupported',
   'cleanup':'Cleanup','cleanup.failed':'Delete all failed','cleanup.dup':'Delete all duplicates','cleanup.uns':'Delete all unsupported',
-  'dz.text':'Drag files/folders here','dz.files':'Choose files','dz.folder':'Choose folder','activity':'Activity','clear':'Clear',
+  'dz.text':'Drag or click to add files/folders','dz.files':'Files','dz.folder':'Folder','activity':'Activity','clear':'Clear',
   'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out','lang.switch':'Switch language',
   'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.session':'Session ·','rate.up':'up','rate.done':'done','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
   'th.filename':'Filename','th.status':'Status','th.chunks':'Chunks','th.size':'Size','th.date':'Date',
@@ -1348,11 +1356,17 @@ load();
   dz.addEventListener('dragover',e=>e.preventDefault());
   dz.addEventListener('dragleave',()=>{if(--dragDepth<=0){dragDepth=0;dz.classList.remove('drag');}});
   dz.addEventListener('drop',async e=>{e.preventDefault();dragDepth=0;dz.classList.remove('drag');const files=await collectFiles(e.dataTransfer);for(const f of files)await enqueue(f,null);});
-  dz.addEventListener('click',pick);
+  // Clicking the field opens a tiny menu (a native dialog can't offer files AND
+  // folders at once), so you can pick either right where you'd otherwise drag.
+  const dzMenu=$('dz-menu');
+  const showMenu=on=>dzMenu.classList.toggle('show', on===undefined?!dzMenu.classList.contains('show'):on);
+  dz.addEventListener('click',e=>{e.stopPropagation();showMenu();});
+  $('menu-files').addEventListener('click',()=>{showMenu(false);pick();});
+  $('menu-folder').addEventListener('click',()=>{showMenu(false);pickFolder();});
+  document.addEventListener('click',e=>{if(!e.target.closest('.dz-pick'))showMenu(false);});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')showMenu(false);});
   dzInput.addEventListener('change',()=>{[...dzInput.files].forEach(f=>enqueue(f,null));dzInput.value='';});
   dzDir.addEventListener('change',()=>{[...dzDir.files].forEach(f=>enqueue(f,null));dzDir.value='';});
-  $('pick-files').addEventListener('click',pick);
-  $('pick-folder').addEventListener('click',pickFolder);
   $('up-cancel').addEventListener('click',cancelAll);
   window.addEventListener('beforeunload',e=>{if([...jobs.values()].some(j=>j.state==='up'||j.state==='wait')){e.preventDefault();e.returnValue='';}});
 
