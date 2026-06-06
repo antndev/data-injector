@@ -115,18 +115,18 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
       <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
     </svg>
   </div>
-  <h1>Authentication</h1>
-  <div class="sub">Enter the password to enter</div>
+  <h1 data-i18n="title">Anmeldung</h1>
+  <div class="sub" data-i18n="sub">Passwort eingeben</div>
 
   <div class="field">
     <input type="password" name="password"
            autocomplete="current-password" autofocus
-           placeholder="Password"
+           placeholder="Passwort" data-i18n-ph="pw"
            {% if locked %}disabled{% endif %}>
     <span class="glow"></span>
   </div>
 
-  <button type="submit" {% if locked %}disabled{% endif %}>Sign in</button>
+  <button type="submit" {% if locked %}disabled{% endif %} data-i18n="signin">Anmelden</button>
 
   {% if error == "1" %}
   <div class="err red">
@@ -135,7 +135,7 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
       <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
       <line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
-    Incorrect password. Try again.
+    <span data-i18n="wrong">Falsches Passwort. Erneut versuchen.</span>
   </div>
   {% elif locked %}
   <div class="err orange">
@@ -145,7 +145,7 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
       <line x1="12" y1="8" x2="12" y2="13"/>
       <line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
-    Too many attempts — try again in
+    <span data-i18n="locked">Zu viele Versuche — erneut in</span>
     <span id="cd">{{ request.query_params.get('wait', '300') }}s</span>
   </div>
   <script>
@@ -159,5 +159,19 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
   </script>
   {% endif %}
 </form>
+<script>
+// German by default; English if the user chose it on the dashboard (localStorage).
+(function(){
+  var lang=localStorage.getItem('lang')||'de';
+  var S={de:{title:'Anmeldung',sub:'Passwort eingeben',pw:'Passwort',signin:'Anmelden',
+             wrong:'Falsches Passwort. Erneut versuchen.',locked:'Zu viele Versuche — erneut in'},
+         en:{title:'Authentication',sub:'Enter the password to enter',pw:'Password',signin:'Sign in',
+             wrong:'Incorrect password. Try again.',locked:'Too many attempts — try again in'}};
+  var d=S[lang]||S.de;
+  document.documentElement.lang=lang;
+  document.querySelectorAll('[data-i18n]').forEach(function(el){if(d[el.dataset.i18n])el.textContent=d[el.dataset.i18n];});
+  document.querySelectorAll('[data-i18n-ph]').forEach(function(el){if(d[el.dataset.i18nPh])el.placeholder=d[el.dataset.i18nPh];});
+})();
+</script>
 </body>
 </html>
