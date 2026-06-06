@@ -449,7 +449,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 <div id="toast">
   <div class="toast-title">
     <svg id="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-    <span id="toast-title">Deleting…</span>
+    <span id="toast-title" data-i18n="toast.deleting">Wird gelöscht…</span>
   </div>
   <div class="toast-bar-wrap"><div class="toast-bar" id="toast-bar"></div></div>
   <div class="toast-sub" id="toast-sub"></div>
@@ -490,7 +490,8 @@ const I18N={
   'lbl.failed':'fehlgeschlagenen Dateien','lbl.dup':'Duplikate','lbl.uns':'nicht unterstützten Dateien',
   'm.diffTitle':'Andere Datei','m.diffMsg':'Die gewählte Datei passt nicht zur fortzusetzenden — bitte als neuen Upload starten.',
   'failedTitle':'Fehlgeschlagen: {name}',
-  'up.uploadingN':'Lädt hoch {done}/{n}…','up.uploaded':'Hochgeladen: {n} {files}','up.donefail':'{dn} fertig · {er} fehlgeschlagen','up.speed':'{r}/s · {eta} übrig'
+  'up.uploadingN':'Lädt hoch {done}/{n}…','up.uploaded':'Hochgeladen: {n} {files}','up.donefail':'{dn} fertig · {er} fehlgeschlagen','up.speed':'{r}/s · {eta} übrig',
+  'log.queued':'In Warteschlange: {name}','log.processing':'Verarbeite: {name}','log.done':'Fertig: {name} ({n} Chunks)','log.duplicate':'Duplikat: {name}','log.unsupported':'Nicht unterstützt: {name}','log.failed':'Fehlgeschlagen: {name} — {err}','log.upcomplete':'Upload fertig: {name}'
  },
  en:{
   'nav.all':'All','nav.queued':'Queued','nav.processing':'Processing','nav.done':'Done','nav.failed':'Failed','nav.duplicate':'Duplicates','nav.unsupported':'Unsupported',
@@ -512,9 +513,23 @@ const I18N={
   'lbl.failed':'failed files','lbl.dup':'duplicates','lbl.uns':'unsupported files',
   'm.diffTitle':'Different file','m.diffMsg':'The file you picked doesn’t match the one being resumed — start it as a new upload instead.',
   'failedTitle':'Failed: {name}',
-  'up.uploadingN':'Uploading {done}/{n}…','up.uploaded':'Uploaded {n} {files}','up.donefail':'{dn} done · {er} failed','up.speed':'{r}/s · {eta} left'
+  'up.uploadingN':'Uploading {done}/{n}…','up.uploaded':'Uploaded {n} {files}','up.donefail':'{dn} done · {er} failed','up.speed':'{r}/s · {eta} left',
+  'log.queued':'Queued: {name}','log.processing':'Processing: {name}','log.done':'Done: {name} ({n} chunks)','log.duplicate':'Duplicate: {name}','log.unsupported':'Unsupported: {name}','log.failed':'Failed: {name} — {err}','log.upcomplete':'Upload complete: {name}'
  }
 };
+// Localise a server-pushed activity-log line for DISPLAY only (the raw text is
+// still used for the rate-tracking regexes). Unknown lines pass through as-is.
+function localizeLog(msg){
+  let m;
+  if(m=msg.match(/^Queued: (.+)$/)) return tf('log.queued',{name:m[1]});
+  if(m=msg.match(/^Processing: (.+)$/)) return tf('log.processing',{name:m[1]});
+  if(m=msg.match(/^Done: (.+) \((\d+) chunks\)$/)) return tf('log.done',{name:m[1],n:m[2]});
+  if(m=msg.match(/^Duplicate: (.+)$/)) return tf('log.duplicate',{name:m[1]});
+  if(m=msg.match(/^Unsupported: (.+)$/)) return tf('log.unsupported',{name:m[1]});
+  if(m=msg.match(/^Failed: (.+?) — (.+)$/)) return tf('log.failed',{name:m[1],err:m[2]});
+  if(m=msg.match(/^Upload complete: (.+)$/)) return tf('log.upcomplete',{name:m[1]});
+  return msg;
+}
 function t(k){return (I18N[LANG]&&I18N[LANG][k])||I18N.de[k]||k;}
 function tf(k,p){let s=t(k);for(const x in p)s=s.split('{'+x+'}').join(p[x]);return s;}
 const fileWord=n=>n===1?t('file.one'):t('file.many');
@@ -523,13 +538,19 @@ function applyI18n(){
   document.querySelectorAll('[data-i18n]').forEach(el=>el.textContent=t(el.dataset.i18n));
   document.querySelectorAll('[data-i18n-ph]').forEach(el=>el.placeholder=t(el.dataset.i18nPh));
   document.querySelectorAll('[data-i18n-title]').forEach(el=>el.title=t(el.dataset.i18nTitle));
+  // Re-localise already-rendered activity-log lines (raw text kept in data-msg).
+  document.querySelectorAll('#log-body .log-line').forEach(line=>{
+    const raw=line.dataset.msg; if(raw==null) return;
+    const me=line.querySelector('.msg'); if(me) me.textContent=localizeLog(raw);
+  });
   const lb=$('lang-btn');if(lb)lb.textContent=LANG==='de'?'EN':'DE';
 }
 function toggleLang(){LANG=LANG==='de'?'en':'de';localStorage.setItem('lang',LANG);applyI18n();load();}
 
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
-const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
+const dtLoc=()=>LANG==='de'?'de-DE':'en-US';   // dates follow the chosen UI language
+const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date(),L=dtLoc();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString(L,{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString(L,{month:'short',day:'numeric'})+' '+d.toLocaleTimeString(L,{hour:'2-digit',minute:'2-digit'})};
 
 // When delete-after-ingest is on, a failed file's bytes are gone, so it can't
 // be retried from disk — you re-upload instead. Hide the retry affordances.
@@ -1030,7 +1051,7 @@ setInterval(updateRates,500);      // 2 Hz refresh — feels live
 const logBody=$('log-body'),logHead=$('log-head');
 const MAX_LINES=300;
 let es=null;
-function fmtTime(iso){return new Date(iso).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+function fmtTime(iso){return new Date(iso).toLocaleTimeString(dtLoc(),{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
 let lastReload=0;
 function scheduleReload(){
   // Throttle to one diff-refresh per 1s. Uses smartRefresh (incremental,
@@ -1051,7 +1072,8 @@ function appendLog(evt){
   const atBottom=logBody.scrollHeight-logBody.scrollTop-logBody.clientHeight<20;
   const line=document.createElement('div');
   line.className='log-line '+(evt.lvl||'INFO');
-  line.innerHTML=`<span class="ldot"></span><span class="ts">${fmtTime(evt.t)}</span><span class="msg">${esc(evt.msg||'')}</span>`;
+  line.dataset.msg=evt.msg||'';   // keep raw so we can re-localise on language switch
+  line.innerHTML=`<span class="ldot"></span><span class="ts">${fmtTime(evt.t)}</span><span class="msg">${esc(localizeLog(evt.msg||''))}</span>`;
   logBody.appendChild(line);
   while(logBody.children.length>MAX_LINES)logBody.removeChild(logBody.firstChild);
   if(atBottom)logBody.scrollTop=logBody.scrollHeight;
