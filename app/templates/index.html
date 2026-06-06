@@ -322,7 +322,9 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 #dz-menu button{
   background:none;border:0;color:var(--text);font:inherit;font-size:13px;
   text-align:left;padding:9px 14px;cursor:pointer;
+  display:flex;align-items:center;gap:9px;
 }
+#dz-menu button svg{width:15px;height:15px;flex-shrink:0;opacity:.85}
 #dz-menu button:hover{background:var(--hover);color:var(--blue)}
 .up-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
 #up-cancel{
@@ -396,8 +398,14 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <input id="dz-dir" type="file" webkitdirectory multiple>
       </div>
       <div id="dz-menu">
-        <button id="menu-files" type="button" data-i18n="dz.files">Dateien</button>
-        <button id="menu-folder" type="button" data-i18n="dz.folder">Ordner</button>
+        <button id="menu-files" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span data-i18n="dz.files">Dateien</span>
+        </button>
+        <button id="menu-folder" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span data-i18n="dz.folder">Ordner</span>
+        </button>
       </div>
     </div>
     <div id="resume-bar"></div>
