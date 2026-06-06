@@ -26,13 +26,32 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 }
 .logout-btn:hover{background:var(--hover);color:var(--text);border-color:var(--line)}
 .logout-btn svg{width:14px;height:14px}
+.lang{position:relative;flex-shrink:0}
 .lang-btn{
-  height:30px;min-width:34px;padding:0 8px;border-radius:15px;
-  background:transparent;border:1px solid var(--line);color:var(--dim);
-  cursor:pointer;font:600 11px Inter,system-ui,sans-serif;letter-spacing:.04em;flex-shrink:0;
-  transition:all .15s;
+  display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:15px;
+  background:transparent;border:1px solid var(--line);color:var(--mute);
+  cursor:pointer;font:500 12px Inter,system-ui,sans-serif;transition:all .15s;
 }
 .lang-btn:hover{background:var(--hover);color:var(--text)}
+.lang-btn .globe{width:14px;height:14px;opacity:.85;flex-shrink:0}
+.lang-btn .chev{width:12px;height:12px;opacity:.6;transition:transform .15s;flex-shrink:0}
+.lang.open .lang-btn{border-color:var(--blue);color:var(--text)}
+.lang.open .lang-btn .chev{transform:rotate(180deg)}
+.lang-menu{
+  position:absolute;top:calc(100% + 6px);right:0;z-index:300;min-width:140px;
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.5);overflow:hidden;
+  display:none;flex-direction:column;animation:pop .12s ease-out;
+}
+.lang.open .lang-menu{display:flex}
+.lang-menu button{
+  background:none;border:0;color:var(--text);font:inherit;font-size:13px;cursor:pointer;
+  text-align:left;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;
+}
+.lang-menu button:hover{background:var(--hover)}
+.lang-menu button.active{color:var(--blue)}
+.lang-menu button .check{width:14px;height:14px;opacity:0;flex-shrink:0}
+.lang-menu button.active .check{opacity:1}
 .nav{display:flex;flex-direction:column;flex-shrink:0;padding-top:16px}
 .nav button{
   background:none;border:0;color:var(--text);font:inherit;cursor:pointer;
@@ -417,7 +436,17 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <button class="btn r" id="b-retry" data-i18n="bulk.retry">Erneut</button>
         <button class="btn d" id="b-del" data-i18n="bulk.delete">Löschen</button>
       </div>
-      <button id="lang-btn" class="lang-btn" type="button" title="Sprache wechseln" data-i18n-title="lang.switch">EN</button>
+      <div class="lang" id="lang">
+        <button id="lang-btn" class="lang-btn" type="button" title="Sprache / Language" aria-haspopup="true">
+          <svg class="globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span id="lang-cur">Deutsch</span>
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="lang-menu" id="lang-menu" role="listbox">
+          <button data-lang="de" type="button">Deutsch<svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+          <button data-lang="en" type="button">English<svg class="check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>
+        </div>
+      </div>
       <form method="post" action="/logout" style="margin:0">
         <button class="logout-btn" title="Abmelden" data-i18n-title="signout" type="submit">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -495,6 +524,7 @@ window.fetch=async(...a)=>{
 
 // ── i18n — German by default, English optional, choice saved in localStorage ──
 let LANG=localStorage.getItem('lang')||'de';
+const LANG_NAMES={de:'Deutsch',en:'English'};   // shown in their own language
 const I18N={
  de:{
   'nav.all':'Alle','nav.queued':'Warteschlange','nav.processing':'In Arbeit','nav.done':'Fertig','nav.failed':'Fehlgeschlagen','nav.duplicate':'Duplikate','nav.unsupported':'Nicht unterstützt',
@@ -569,9 +599,10 @@ function applyI18n(){
     const raw=line.dataset.msg; if(raw==null) return;
     const me=line.querySelector('.msg'); if(me) me.textContent=localizeLog(raw);
   });
-  const lb=$('lang-btn');if(lb)lb.textContent=LANG==='de'?'DE':'EN';  // show the CURRENT language
+  const cur=$('lang-cur');if(cur)cur.textContent=LANG_NAMES[LANG];   // button shows the CURRENT language
+  document.querySelectorAll('#lang-menu button').forEach(b=>b.classList.toggle('active',b.dataset.lang===LANG));
 }
-function toggleLang(){LANG=LANG==='de'?'en':'de';localStorage.setItem('lang',LANG);applyI18n();load();}
+function setLang(lang){if(!LANG_NAMES[lang]||lang===LANG)return;LANG=lang;localStorage.setItem('lang',LANG);applyI18n();load();}
 
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
@@ -1108,7 +1139,11 @@ $('log-clear').onclick=async()=>{
   try{await fetch('/events/clear',{method:'POST'});}catch{}
 };
 
-$('lang-btn').onclick=toggleLang;
+const langEl=$('lang');
+$('lang-btn').onclick=e=>{e.stopPropagation();langEl.classList.toggle('open');};
+document.querySelectorAll('#lang-menu button').forEach(b=>b.onclick=()=>{langEl.classList.remove('open');setLang(b.dataset.lang);});
+document.addEventListener('click',e=>{if(!e.target.closest('#lang'))langEl.classList.remove('open');});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')langEl.classList.remove('open');});
 applyI18n();
 load();
 
