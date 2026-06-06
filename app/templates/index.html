@@ -1193,14 +1193,20 @@ load();
     }catch{return null;}
   }
 
-  // ── IndexedDB (store 'jobs' keyed by fingerprint 'fp') ──
+  // ── IndexedDB: 'jobs' (per file, keyed by fp) + 'dirs' (per folder pick) ──
   let _db=null;
-  function db(){return _db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('ingestor-uploads',1);r.onupgradeneeded=()=>r.result.createObjectStore('jobs',{keyPath:'fp'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));}
-  async function jobPut(j){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('jobs','readwrite');t.objectStore('jobs').put(j);t.oncomplete=res;t.onerror=()=>rej(t.error);});}
-  async function jobDel(fp){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('jobs','readwrite');t.objectStore('jobs').delete(fp);t.oncomplete=res;t.onerror=()=>rej(t.error);});}
-  async function jobAll(){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('jobs','readonly');const q=t.objectStore('jobs').getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>rej(q.error);});}
-  // Persist only metadata (+ handle where available) — never the file bytes.
-  const serial=j=>({fp:j.fp,name:j.name,size:j.size,lastModified:j.lastModified,uploadId:j.uploadId,offset:j.offset,handle:j.handle||null});
+  function db(){return _db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('ingestor-uploads',2);
+    r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains('jobs'))d.createObjectStore('jobs',{keyPath:'fp'});if(!d.objectStoreNames.contains('dirs'))d.createObjectStore('dirs',{keyPath:'gid'});};
+    r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));}
+  const _tx=(store,mode,fn)=>db().then(d=>new Promise((res,rej)=>{const t=d.transaction(store,mode);const r=fn(t.objectStore(store));t.oncomplete=()=>res(r&&r.result);t.onerror=()=>rej(t.error);}));
+  const jobPut=j=>_tx('jobs','readwrite',s=>s.put(j));
+  const jobDel=fp=>_tx('jobs','readwrite',s=>s.delete(fp));
+  const jobAll=()=>_tx('jobs','readonly',s=>s.getAll()).then(r=>r||[]);
+  const dirsPut=o=>_tx('dirs','readwrite',s=>s.put(o));
+  const dirsDel=gid=>_tx('dirs','readwrite',s=>s.delete(gid));
+  const dirsAll=()=>_tx('dirs','readonly',s=>s.getAll()).then(r=>r||[]);
+  // Persist only metadata (+ handle / folder-group id where available) — never the bytes.
+  const serial=j=>({fp:j.fp,name:j.name,size:j.size,lastModified:j.lastModified,uploadId:j.uploadId,offset:j.offset,handle:j.handle||null,gid:j.gid||null});
 
   // ── Session state ──
   const jobs=new Map();   // fp -> {file,handle,fp,name,size,lastModified,offset,uploadId,state,ctrl}
@@ -1327,10 +1333,10 @@ load();
     refreshResumeChips();
   }
 
-  async function enqueue(file,handle,resumed){
+  async function enqueue(file,handle,resumed,gid){
     const fp=fpOf(file);
     if(jobs.has(fp))return;
-    const j={file,handle:handle||null,fp,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,uploadId:null,state:'wait',resumed:!!resumed};
+    const j={file,handle:handle||null,fp,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,uploadId:null,state:'wait',resumed:!!resumed,gid:gid||null};
     jobs.set(fp,j);await jobPut(serial(j));
     showProg();schedule();
   }
@@ -1355,18 +1361,24 @@ load();
     }
     dzInput.click();
   }
-  // Recurse a picked directory → enqueue every file (with its handle on Chromium
-  // so the upload can resume across a browser restart).
-  async function walkDir(dh){
+  // Recurse a picked directory → enqueue every file (with its handle + group id
+  // on Chromium so the WHOLE folder resumes with one permission grant).
+  async function walkDir(dh,gid){
     for await (const entry of dh.values()){
-      if(entry.kind==='file'){try{await enqueue(await entry.getFile(),entry);}catch{}}
-      else if(entry.kind==='directory'){await walkDir(entry);}
+      if(entry.kind==='file'){try{await enqueue(await entry.getFile(),entry,false,gid);}catch{}}
+      else if(entry.kind==='directory'){await walkDir(entry,gid);}
     }
   }
+  const newGid=()=>(crypto.randomUUID?crypto.randomUUID():'g'+Date.now()+Math.random().toString(16).slice(2));
   async function pickFolder(){
     if(hasDir){
-      try{const dh=await window.showDirectoryPicker();await walkDir(dh);return;}
-      catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
+      try{
+        const dh=await window.showDirectoryPicker();
+        const gid=newGid();
+        try{await dirsPut({gid,name:dh.name||'Ordner',handle:dh});}catch{}  // store the folder handle for one-grant resume
+        await walkDir(dh,gid);
+        return;
+      }catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
     }
     dzDir.click();   // webkitdirectory <input>: open explorer, pick one folder, all files included
   }
@@ -1388,21 +1400,63 @@ load();
     chip.remove();
     await enqueue(file,handle,true);   // resumed=true → skip the redundant dedup re-hash
   }
+  function mkChip(label,pct,title){
+    const chip=document.createElement('div');chip.className='resume-chip';
+    chip.innerHTML=`<span class="rc-name" title="${esc(title||label)}">${esc(label)}</span><span class="rc-pct">${pct}% · ${esc(t('resume'))}</span>`;
+    return chip;
+  }
   async function refreshResumeChips(){
     resumeBar.innerHTML='';
-    let saved=[];try{saved=await jobAll();}catch{return;}
+    let saved=[],dirs=[];try{saved=await jobAll();dirs=await dirsAll();}catch{return;}
+    // probe the server offset for each saved (not-active) job; keep resumable ones
+    const live=[];
     for(const s of saved){
       if(jobs.has(s.fp))continue;
       let off=0,exists=true,reachable=true;
       try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;else reachable=false;}catch{reachable=false;}
       if(!reachable)continue;                       // transient error — don't show a bogus 0% chip; retry next refresh
       if(!exists||off>=s.size){await jobDel(s.fp);continue;}
-      const pct=s.size>0?Math.round(off/s.size*100):0;
-      const chip=document.createElement('div');chip.className='resume-chip';
-      chip.innerHTML=`<span class="rc-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="rc-pct">${pct}% · ${esc(t('resume'))}</span>`;
+      s._off=off;live.push(s);
+    }
+    // group folder jobs by gid; everything else is an individual file
+    const groups=new Map(),singles=[];
+    for(const s of live){if(s.gid){if(!groups.has(s.gid))groups.set(s.gid,[]);groups.get(s.gid).push(s);}else singles.push(s);}
+    const dirMap=new Map(dirs.map(d=>[d.gid,d]));
+    // ONE chip per folder → resumes the whole folder with a single permission grant
+    for(const [gid,group] of groups){
+      const d=dirMap.get(gid);
+      const total=group.reduce((a,s)=>a+s.size,0),done=group.reduce((a,s)=>a+s._off,0);
+      const pct=total>0?Math.round(done/total*100):0;
+      const nm=(d&&d.name)||'Ordner';
+      const chip=mkChip(`📁 ${nm} (${group.length})`,pct,nm);
+      chip.onclick=()=>resumeFolder(gid,d,group,chip);
+      resumeBar.appendChild(chip);
+    }
+    // one chip per individually-picked file
+    for(const s of singles){
+      const pct=s.size>0?Math.round(s._off/s.size*100):0;
+      const chip=mkChip(s.name,pct);
       chip.onclick=()=>resumeSaved(s,chip);
       resumeBar.appendChild(chip);
     }
+    // GC folder records whose jobs are all gone
+    for(const d of dirs){if(!groups.has(d.gid))await dirsDel(d.gid);}
+  }
+  async function resumeFolder(gid,d,group,chip){
+    let dir=d&&d.handle;
+    if(!dir){                                    // no stored handle (webkitdirectory/drag) → re-pick the folder
+      if(!hasDir)return;
+      try{dir=await window.showDirectoryPicker();}catch{return;}
+    }else{
+      try{let p=await dir.queryPermission({mode:'read'});if(p!=='granted')p=await dir.requestPermission({mode:'read'});if(p!=='granted')return;}
+      catch(e){console.error('dir perm',e);return;}
+    }
+    // re-walk the directory ONCE → map fp → {file,handle}; one grant covers all files
+    const map=new Map();
+    const walk=async dh=>{for await(const e of dh.values()){if(e.kind==='file'){try{const f=await e.getFile();map.set(fpOf(f),{file:f,handle:e});}catch{}}else if(e.kind==='directory')await walk(e);}};
+    try{await walk(dir);}catch(e){console.error('rewalk',e);return;}
+    chip.remove();
+    for(const s of group){const m=map.get(s.fp);if(m)await enqueue(m.file,m.handle,true,gid);}  // resume each from its server offset
   }
 
   // ── Wiring ──
