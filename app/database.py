@@ -55,7 +55,13 @@ async def connect() -> AsyncIterator[aiosqlite.Connection]:
 async def owui_connect() -> AsyncIterator[aiosqlite.Connection]:
     """Open a connection to the shared OpenWebUI database with the same
     busy_timeout — both we and openwebui itself write to webui.db, and
-    without this writes can collide and error immediately."""
-    async with aiosqlite.connect("/openwebui-data/webui.db") as db:
+    without this writes can collide and error immediately.
+
+    Opened in read-write mode via a file: URI so that a wrong/unmounted path
+    raises instead of silently creating an empty webui.db that the writer
+    would then happily write into while files never appear in the real KB.
+    """
+    uri = f"file:{settings.openwebui_db_path}?mode=rw"
+    async with aiosqlite.connect(uri, uri=True) as db:
         await db.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         yield db

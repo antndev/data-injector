@@ -32,6 +32,14 @@ class Settings(BaseSettings):
         return self.data_dir / "unsupported"
 
     @property
+    def uploads_tmp_dir(self) -> Path:
+        # Durable staging for resumable web uploads. A partial upload lives
+        # here as <id>.part (+ <id>.json sidecar) until it is complete, then
+        # is atomically renamed into the inbox. The .part survives a server
+        # restart, so an interrupted upload can resume from its current size.
+        return self.data_dir / "_uploads"
+
+    @property
     def log_dir(self) -> Path:
         return self.db_path.parent / "logs"
 
@@ -65,6 +73,27 @@ class Settings(BaseSettings):
 
     # ── OpenWebUI ────────────────────────────────────────────────────────────
     openwebui_user_id: str
+    # Path to OpenWebUI's shared sqlite DB inside this container. Configurable
+    # so the app isn't silently broken if the volume is mounted elsewhere or
+    # OpenWebUI changes its layout. The startup check fails loud if it's wrong.
+    openwebui_db_path: Path = Path("/openwebui-data/webui.db")
+
+    # ── Storage model ─────────────────────────────────────────────────────────
+    # When True (default), a file is removed from disk as soon as its vectors
+    # are in Qdrant — so customer data lives ONLY in the vector DB, never
+    # retained as a copy on the server. Set False to keep the old behaviour
+    # of moving finished files into <DATA_DIR>/done.
+    delete_after_ingest: bool = True
+
+    # ── Resumable web upload ──────────────────────────────────────────────────
+    # Server tolerates any chunk size; this is the size the dashboard uses.
+    upload_chunk_bytes: int = 8 * 1024 * 1024
+    # Abandoned partial uploads are reaped after this many hours of inactivity
+    # (measured against the .part's last-modified time, so a paused-but-alive
+    # upload is never swept).
+    upload_ttl_hours: int = 48
+    # 0 = unlimited. Otherwise reject an upload whose declared size exceeds this.
+    upload_max_bytes: int = 0
 
     # ── Auth ─────────────────────────────────────────────────────────────────
     admin_password: str  # no default — app won't start without this set
@@ -78,7 +107,7 @@ class Settings(BaseSettings):
         for d in [
             self.inbox_dir, self.processing_dir, self.done_dir,
             self.failed_dir, self.duplicates_dir, self.unsupported_dir,
-            self.log_dir,
+            self.uploads_tmp_dir, self.log_dir,
         ]:
             d.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

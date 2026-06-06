@@ -77,10 +77,20 @@ _HANDLERS = {
 async def _writer_loop() -> None:
     """Drain the queue forever. Coalesce concurrent ops into single
     transactions: as soon as one item arrives, wait briefly for stragglers,
-    then flush them all in one commit."""
+    then flush them all in one commit.
+
+    Each op runs inside its own SAVEPOINT and resolves ITS OWN future with
+    success or the exact exception it raised — never the batch-wide outcome.
+    Previously a per-op failure (e.g. a webui.db schema mismatch) was logged
+    and swallowed while every future was set to success, so the worker marked
+    files 'done' that had never actually been written into the Knowledge Base.
+    """
     assert _queue is not None
     while True:
-        first = await _queue.get()
+        try:
+            first = await _queue.get()
+        except asyncio.CancelledError:
+            raise
         batch = [first]
 
         # Brief flush window to coalesce concurrent ops
@@ -93,27 +103,54 @@ async def _writer_loop() -> None:
                 item = await asyncio.wait_for(_queue.get(), timeout=remaining)
             except asyncio.TimeoutError:
                 break
+            except asyncio.CancelledError:
+                # Resolve everything we already pulled before bailing out, so
+                # no caller is left awaiting a future that never completes.
+                _fail_batch(batch, asyncio.CancelledError())
+                raise
             batch.append(item)
 
         try:
             async with owui_connect() as db:
+                errors: list[Exception | None] = []
                 for op, args, _fut in batch:
                     handler = _HANDLERS[op]
                     try:
                         await handler(db, *args)
+                        errors.append(None)
                     except Exception as e:
+                        # Record the per-op failure; its own caller's future is
+                        # resolved with this exception below (the batch as a
+                        # whole still commits the ops that succeeded). We avoid
+                        # SAVEPOINTs here on purpose: under sqlite3's implicit
+                        # transaction handling they interact badly, and a failed
+                        # op self-heals on the next register (INSERT OR REPLACE).
                         logger.warning("OWUI %s failed for %r: %s", op, args, e)
+                        errors.append(e)
                 await db.commit()
+        except asyncio.CancelledError:
+            _fail_batch(batch, asyncio.CancelledError())
+            raise
         except Exception as e:
+            # Could not even open/commit the DB (e.g. wrong/unmounted path).
+            # Fail every caller loudly rather than reporting phantom success.
             logger.exception("OWUI batch flush failed: %s", e)
-            for _, _, fut in batch:
-                if not fut.done():
-                    fut.set_exception(e)
+            _fail_batch(batch, e)
             continue
 
-        for _, _, fut in batch:
-            if not fut.done():
+        for (_, _, fut), err in zip(batch, errors):
+            if fut.done():
+                continue
+            if err is not None:
+                fut.set_exception(err)
+            else:
                 fut.set_result(None)
+
+
+def _fail_batch(batch, exc: BaseException) -> None:
+    for _, _, fut in batch:
+        if not fut.done():
+            fut.set_exception(exc)
 
 
 def start_writer() -> None:
@@ -133,6 +170,16 @@ async def stop_writer() -> None:
         except (asyncio.CancelledError, Exception):
             pass
         _writer_task = None
+    # Drain anything still queued so no caller (e.g. a DELETE request not
+    # tracked in the worker's task set) is left awaiting forever.
+    if _queue is not None:
+        while not _queue.empty():
+            try:
+                _, _, fut = _queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if not fut.done():
+                fut.set_exception(RuntimeError("OWUI writer shut down"))
 
 
 async def register(file_id: str, filename: str, file_hash: str, size: int) -> None:

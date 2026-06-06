@@ -267,6 +267,43 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .modal-confirm{background:#3a1a1a;border:1px solid #6a2a2a;color:var(--red);padding:7px 18px;border-radius:18px;cursor:pointer;font:inherit;font-size:13px;font-weight:500}
 .modal-confirm:hover{background:#4a2020}
 
+/* upload drop zone (sidebar) */
+.dz-wrap{border-top:1px solid var(--line);padding:10px 0 8px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+#drop-zone{
+  margin:0 12px;padding:10px 14px;
+  border:1.5px dashed var(--line);border-radius:8px;
+  display:flex;align-items:center;gap:10px;
+  cursor:pointer;transition:border-color .15s,background .15s,opacity .15s;
+  background:#111;flex-shrink:0;
+}
+#drop-zone:hover,#drop-zone.drag{border-color:var(--blue);background:rgba(62,166,255,.04)}
+#drop-zone svg{width:16px;height:16px;flex-shrink:0;color:var(--dim)}
+#drop-zone:hover svg,#drop-zone.drag svg{color:var(--blue)}
+#drop-zone .dz-text{font-size:12px;color:var(--mute)}
+#dz-input{display:none}
+/* resume chips (shown after a refresh / browser restart) */
+#resume-bar{margin:0 12px;display:flex;flex-direction:column;gap:5px}
+#resume-bar:empty{display:none}
+.resume-chip{
+  display:flex;align-items:center;gap:8px;font-size:11px;
+  background:rgba(62,166,255,.06);border:1px solid rgba(62,166,255,.2);
+  border-radius:7px;padding:6px 9px;color:var(--mute);cursor:pointer;
+}
+.resume-chip:hover{background:rgba(62,166,255,.12);color:var(--text)}
+.resume-chip .rc-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.resume-chip .rc-pct{flex-shrink:0;color:var(--blue);font-variant-numeric:tabular-nums}
+/* active upload progress */
+#upload-progress{margin:0 12px;font-size:11px;color:var(--dim);display:none;flex-direction:column;gap:4px}
+#upload-progress.show{display:flex}
+.up-row{display:flex;align-items:center;gap:8px;font-size:11px}
+#up-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;color:var(--mute)}
+#up-pct{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--mute)}
+#up-bar-wrap{background:var(--line);border-radius:3px;height:3px;overflow:hidden}
+#up-bar{height:100%;border-radius:3px;background:var(--blue);transition:width .15s,background .3s;width:0%}
+#up-bar.done{background:var(--green)}
+#up-bar.err{background:var(--red)}
+#up-stats{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+
 </style>
 </head>
 <body>
@@ -297,6 +334,27 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       Delete all unsupported<span class="cc" id="cc-uns">0</span>
     </button>
   </div>
+  <div class="dz-wrap">
+    <div id="drop-zone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div class="dz-text">Drop files or click to upload</div>
+      <input id="dz-input" type="file" multiple>
+    </div>
+    <div id="resume-bar"></div>
+    <div id="upload-progress">
+      <div class="up-row">
+        <span id="up-label">Uploading…</span>
+        <span id="up-pct">0%</span>
+      </div>
+      <div id="up-bar-wrap"><div id="up-bar"></div></div>
+      <div id="up-stats"></div>
+    </div>
+  </div>
+
   <div class="log">
     <div class="log-head" id="log-head">
       <span>Activity</span>
@@ -391,6 +449,15 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 
 <script>
 const $=id=>document.getElementById(id);
+// A 401 from any API call means the session expired — bounce to the login page
+// instead of letting the dashboard silently break (empty lists, dead buttons).
+const _origFetch=window.fetch.bind(window);
+let _redirecting=false;
+window.fetch=async(...a)=>{
+  const r=await _origFetch(...a);
+  if(r.status===401&&!_redirecting){_redirecting=true;location.href='/login';}
+  return r;
+};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
@@ -932,6 +999,188 @@ $('log-clear').onclick=async()=>{
 };
 
 load();
+
+// ── Resumable upload ──────────────────────────────────────────────────────
+// Chunked, offset-based (tus-style). A partial upload is durable on the server
+// (.part file, size = resume cursor) and tracked in IndexedDB here, so it
+// resumes after a page refresh or a full browser restart. Where the File
+// System Access API exists (Chromium) we persist the file handle for one-click
+// resume; elsewhere we fall back to re-selecting the same file.
+(()=>{
+  const CHUNK=8*1024*1024;           // matches server upload_chunk_bytes intent
+  const CONCURRENCY=3;               // parallel files
+  const MAX_RETRY=6;
+  const hasFS='showOpenFilePicker' in window;
+  const dz=$('drop-zone'),dzInput=$('dz-input'),resumeBar=$('resume-bar');
+  const upProgress=$('upload-progress'),upBar=$('up-bar'),upPct=$('up-pct'),
+        upLabel=$('up-label'),upStats=$('up-stats');
+
+  const fmtBytes=b=>{if(b<1024)return (b|0)+' B';const u=['KB','MB','GB','TB'];let i=-1;do{b/=1024;i++}while(b>=1024&&i<u.length-1);return b.toFixed(b<10?1:0)+' '+u[i];};
+  const fmtEta=s=>{if(!isFinite(s)||s<0)return '—';if(s<60)return Math.ceil(s)+'s';if(s<3600)return Math.round(s/60)+'m';return Math.round(s/3600)+'h';};
+  const fpOf=f=>`${f.name}:${f.size}:${f.lastModified}`;
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+  // ── IndexedDB (store 'jobs' keyed by fingerprint 'fp') ──
+  let _db=null;
+  function db(){return _db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('ingestor-uploads',1);r.onupgradeneeded=()=>r.result.createObjectStore('jobs',{keyPath:'fp'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);}));}
+  async function jobPut(j){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('jobs','readwrite');t.objectStore('jobs').put(j);t.oncomplete=res;t.onerror=()=>rej(t.error);});}
+  async function jobDel(fp){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('jobs','readwrite');t.objectStore('jobs').delete(fp);t.oncomplete=res;t.onerror=()=>rej(t.error);});}
+  async function jobAll(){const d=await db();return new Promise((res,rej)=>{const t=d.transaction('jobs','readonly');const q=t.objectStore('jobs').getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>rej(q.error);});}
+  // Persist only metadata (+ handle where available) — never the file bytes.
+  const serial=j=>({fp:j.fp,name:j.name,size:j.size,lastModified:j.lastModified,uploadId:j.uploadId,offset:j.offset,handle:j.handle||null});
+
+  // ── Session state ──
+  const jobs=new Map();   // fp -> {file,handle,fp,name,size,lastModified,offset,uploadId,state}
+  let running=0,_ema=0,_emaT=0,_emaLoaded=0;
+
+  function showProg(){upProgress.classList.add('show');upBar.classList.remove('done','err');}
+  function updateUI(){
+    let total=0,sent=0,done=0,n=0,upName='';
+    for(const j of jobs.values()){n++;total+=j.size;sent+=Math.min(j.offset,j.size);if(j.state==='done')done++;else if(j.state==='up'&&!upName)upName=j.name;}
+    if(!n)return;
+    const pct=total>0?Math.min(100,Math.round(sent/total*100)):0;
+    upBar.style.width=pct+'%';upPct.textContent=pct+'%';
+    upLabel.textContent=n>1?`Uploading ${done}/${n}…`:(upName||[...jobs.values()][0].name);
+    const now=performance.now();
+    if(now-_emaT>=200){const inst=(sent-_emaLoaded)/Math.max(0.001,(now-_emaT)/1000);_ema=_ema?_ema*0.7+inst*0.3:inst;_emaT=now;_emaLoaded=sent;const left=_ema>0?(total-sent)/_ema:Infinity;upStats.textContent=sent<total?`${fmtBytes(Math.max(0,_ema))}/s · ${fmtEta(left)} left`:'';}
+  }
+
+  function schedule(){
+    while(running<CONCURRENCY){
+      const j=[...jobs.values()].find(x=>x.state==='wait'&&x.file);
+      if(!j)break;
+      j.state='up';running++;
+      uploadJob(j).then(()=>{j.state='done';},e=>{j.state='err';console.error('upload',j.name,e);})
+        .finally(()=>{running--;schedule();idle();});
+    }
+    updateUI();
+  }
+
+  async function uploadJob(j){
+    // Create or resume on the server (idempotent by fingerprint → true offset).
+    const cr=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp})});
+    if(!cr.ok)throw new Error('create '+cr.status);
+    const c=await cr.json();
+    j.uploadId=c.upload_id;j.offset=c.offset;await jobPut(serial(j));
+
+    let retry=0;
+    while(j.offset<j.size){
+      const blob=j.file.slice(j.offset,j.offset+CHUNK);
+      let r;
+      try{
+        r=await fetch('/uploads/'+j.uploadId,{method:'PATCH',
+          headers:{'Upload-Offset':String(j.offset),'Content-Type':'application/offset+octet-stream'},body:blob});
+      }catch(netErr){
+        if(++retry>MAX_RETRY)throw netErr;
+        await sleep(Math.min(15000,500*2**retry));continue;   // backoff, chunk re-sliceable
+      }
+      retry=0;
+      if(r.status===204||r.status===409){
+        const off=parseInt(r.headers.get('Upload-Offset'));
+        if(!isNaN(off))j.offset=off;
+        await jobPut(serial(j));updateUI();
+        if(r.headers.get('Upload-Complete')==='1')break;
+      }else if(r.status===404){
+        // Server dropped the partial (TTL/cancel). Recreate from scratch once.
+        const c2=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp})});
+        if(!c2.ok)throw new Error('recreate '+c2.status);
+        const cc=await c2.json();j.uploadId=cc.upload_id;j.offset=cc.offset;await jobPut(serial(j));
+      }else{
+        throw new Error('patch '+r.status);
+      }
+    }
+    await jobDel(j.fp);
+  }
+
+  function idle(){
+    const busy=[...jobs.values()].some(j=>j.state==='wait'||j.state==='up');
+    if(running||busy)return;
+    const dn=[...jobs.values()].filter(j=>j.state==='done').length;
+    const er=[...jobs.values()].filter(j=>j.state==='err').length;
+    if(er){upBar.classList.add('err');upLabel.textContent=`${dn} done · ${er} failed`;upStats.textContent='';}
+    else{upBar.classList.add('done');upBar.style.width='100%';upPct.textContent='100%';upLabel.textContent=`Uploaded ${dn} file${dn!==1?'s':''}`;upStats.textContent='';}
+    jobs.clear();_ema=0;_emaT=0;_emaLoaded=0;
+    load();                                  // refresh the file table
+    setTimeout(()=>{if(jobs.size===0&&!running)upProgress.classList.remove('show');},er?5000:3000);
+    refreshResumeChips();
+  }
+
+  async function enqueue(file,handle){
+    const fp=fpOf(file);
+    if(jobs.has(fp))return;
+    const j={file,handle:handle||null,fp,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,uploadId:null,state:'wait'};
+    jobs.set(fp,j);await jobPut(serial(j));
+    showProg();schedule();
+  }
+
+  // Walk dropped folders recursively → flat File[] (folders themselves skipped).
+  async function collectFiles(dt){
+    const items=dt.items;
+    if(!items||!items.length||!items[0].webkitGetAsEntry)return [...dt.files];
+    const out=[];
+    const walk=async entry=>{
+      if(entry.isFile){out.push(await new Promise((res,rej)=>entry.file(res,rej)));}
+      else if(entry.isDirectory){const rd=entry.createReader();while(true){const b=await new Promise((res,rej)=>rd.readEntries(res,rej));if(!b.length)break;for(const e of b)await walk(e);}}
+    };
+    for(const it of items){const e=it.webkitGetAsEntry&&it.webkitGetAsEntry();if(e)await walk(e);}
+    return out;
+  }
+
+  async function pick(){
+    if(hasFS){
+      try{const handles=await window.showOpenFilePicker({multiple:true});for(const h of handles){const f=await h.getFile();await enqueue(f,h);}return;}
+      catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
+    }
+    dzInput.click();
+  }
+
+  // ── Resume after refresh / browser restart ──
+  function pickOne(){return new Promise(res=>{const inp=document.createElement('input');inp.type='file';inp.onchange=()=>res(inp.files[0]||null);inp.click();});}
+  async function resumeSaved(s,chip){
+    let file=null;
+    if(s.handle){
+      try{
+        let perm=await s.handle.queryPermission({mode:'read'});
+        if(perm!=='granted')perm=await s.handle.requestPermission({mode:'read'});  // needs the click gesture
+        if(perm==='granted')file=await s.handle.getFile();
+      }catch(e){console.error('handle',e);}
+    }
+    if(!file)file=await pickOne();
+    if(!file)return;
+    if(fpOf(file)!==s.fp){await showModal('Different file','The file you picked doesn’t match the one being resumed — start it as a new upload instead.','Close',false);return;}
+    chip.remove();
+    await enqueue(file,s.handle||null);
+  }
+  async function refreshResumeChips(){
+    resumeBar.innerHTML='';
+    let saved=[];try{saved=await jobAll();}catch{return;}
+    for(const s of saved){
+      if(jobs.has(s.fp))continue;
+      let off=0,exists=true;
+      try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;}catch{}
+      if(!exists||off>=s.size){await jobDel(s.fp);continue;}
+      const pct=s.size>0?Math.round(off/s.size*100):0;
+      const chip=document.createElement('div');chip.className='resume-chip';
+      chip.innerHTML=`<span class="rc-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="rc-pct">${pct}% · resume</span>`;
+      chip.onclick=()=>resumeSaved(s,chip);
+      resumeBar.appendChild(chip);
+    }
+  }
+
+  // ── Wiring ──
+  let dragDepth=0;
+  dz.addEventListener('dragenter',e=>{e.preventDefault();dragDepth++;dz.classList.add('drag');});
+  dz.addEventListener('dragover',e=>e.preventDefault());
+  dz.addEventListener('dragleave',()=>{if(--dragDepth<=0){dragDepth=0;dz.classList.remove('drag');}});
+  dz.addEventListener('drop',async e=>{e.preventDefault();dragDepth=0;dz.classList.remove('drag');const files=await collectFiles(e.dataTransfer);for(const f of files)await enqueue(f,null);});
+  dz.addEventListener('click',pick);
+  dzInput.addEventListener('change',()=>{[...dzInput.files].forEach(f=>enqueue(f,null));dzInput.value='';});
+  window.addEventListener('beforeunload',e=>{if([...jobs.values()].some(j=>j.state==='up'||j.state==='wait')){e.preventDefault();e.returnValue='';}});
+
+  refreshResumeChips();
+})();
 
 </script>
 </body>

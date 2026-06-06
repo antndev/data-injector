@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import secrets
+import time
 from concurrent.futures import ThreadPoolExecutor
 from logging.handlers import TimedRotatingFileHandler
 from contextlib import asynccontextmanager
@@ -73,6 +74,58 @@ def _check_log_size() -> None:
 
 audit = _setup_audit_log()
 
+log = logging.getLogger("app")
+
+
+def _check_owui_db() -> None:
+    """Loudly flag a misconfigured OpenWebUI DB at startup. If the path is
+    wrong/unmounted or the expected tables are missing, every register would
+    otherwise fail quietly — now those failures surface (and per-op futures
+    propagate the error so affected files are marked 'failed', not 'done')."""
+    import sqlite3
+    path = settings.openwebui_db_path
+    if not path.exists():
+        log.error("OpenWebUI DB not found at %s — files will NOT appear in the "
+                  "Knowledge Base until OPENWEBUI_DB_PATH / the volume mount is fixed.", path)
+        return
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            have = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            con.close()
+        missing = {"file", "knowledge_file"} - have
+        if missing:
+            log.error("OpenWebUI DB at %s is missing table(s) %s — registrations "
+                      "will fail. Is this the right webui.db?", path, sorted(missing))
+    except Exception as e:
+        log.error("Could not inspect OpenWebUI DB at %s: %s", path, e)
+
+
+def _sweep_stale_uploads() -> None:
+    """Reap abandoned resumable-upload partials. Keyed on the .part's mtime
+    (bumped by every PATCH) so a paused-but-alive upload is never swept — only
+    those untouched for longer than UPLOAD_TTL_HOURS. NOTE: unlike the old
+    one-shot upload, we must NOT wipe all *.part on boot — that would destroy
+    resumability across a restart."""
+    d = settings.uploads_tmp_dir
+    if not d.exists():
+        return
+    ttl = settings.upload_ttl_hours * 3600
+    now = time.time()
+    for sidecar in d.glob("*.json"):
+        part = sidecar.with_suffix(".part")
+        ref = part if part.exists() else sidecar
+        try:
+            if now - ref.stat().st_mtime > ttl:
+                part.unlink(missing_ok=True)
+                sidecar.unlink(missing_ok=True)
+                log.info("Swept stale upload partial: %s", sidecar.stem)
+        except OSError:
+            pass
+
+
 PUBLIC_PATHS = {"/login", "/logout", "/health"}
 
 
@@ -80,6 +133,8 @@ PUBLIC_PATHS = {"/login", "/logout", "/health"}
 async def lifespan(app: FastAPI):
     settings.create_dirs()
     _check_log_size()
+    _check_owui_db()
+    _sweep_stale_uploads()
     await init_db()
 
     loop = asyncio.get_running_loop()
@@ -97,13 +152,37 @@ async def lifespan(app: FastAPI):
     observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
     worker_task = asyncio.create_task(run_worker(inbox_queue))
 
+    async def _supervise_observer():
+        """Restart the watchdog Observer if its thread dies (seen with mounted
+        shares / SFTP). Without this, file detection silently degrades to the
+        15s periodic rescan with no alert."""
+        nonlocal observer
+        while True:
+            try:
+                await asyncio.sleep(20)
+                if not observer.is_alive():
+                    log.warning("Watcher Observer died — restarting it")
+                    observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
+                    inbox_queue.put_nowait(None)  # force an immediate rescan
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Observer supervisor tick failed (continuing)")
+
+    supervisor_task = asyncio.create_task(_supervise_observer())
+
     yield
 
     # Shutdown order matters:
-    # 1. Stop accepting new inbox events (the watcher).
+    # 1. Stop the Observer supervisor and the watcher (no new inbox events).
     # 2. Cancel the worker scan loop so it doesn't enqueue more files.
     # 3. Cancel + await every in-flight per-file processing task.
-    # 4. Close the persistent Qdrant client.
+    # 4. Close the persistent Qdrant client + drain the OWUI writer.
+    supervisor_task.cancel()
+    try:
+        await supervisor_task
+    except (asyncio.CancelledError, Exception):
+        pass
     observer.stop()
     observer.join()
     worker_task.cancel()

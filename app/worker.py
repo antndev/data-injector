@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import logging
+import math
 import re
 import shutil
 import uuid
@@ -9,7 +10,10 @@ from pathlib import Path
 
 import aiosqlite
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance, FieldCondition, Filter, MatchValue, PayloadSchemaType,
+    PointStruct, VectorParams,
+)
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from ollama import AsyncClient as OllamaClient
 
@@ -45,6 +49,11 @@ active_paths: set[str] = set()
 _running_tasks: set[asyncio.Task] = set()
 
 _register_lock = asyncio.Lock()
+# Serialises the short duplicate-check → claim critical section so two
+# identical-content files arriving together can never both ingest (or both be
+# discarded as duplicates). Only the cheap check + hash-claim + atomic move
+# run under it; all heavy work (embed/upsert) happens after release.
+_dedup_lock = asyncio.Lock()
 _inbox_queue: asyncio.Queue | None = None  # set by run_worker; used by retry endpoint
 
 # ---------------------------------------------------------------------------
@@ -299,33 +308,47 @@ async def _process_file(path: Path, file_id: str):
             logger.info("Unsupported: %s", path.name)
             return
 
-        # 2. Duplicate check (inbox only) — hash in thread pool (non-blocking)
+        # 2. Duplicate check + claim (inbox only). Hash outside the lock (in a
+        # thread pool, fully parallel); only the check→claim→move is serialised.
         if path.parent == settings.inbox_dir:
             file_hash = await loop.run_in_executor(None, _sha256, path)
-            async with connect() as db:
-                db.row_factory = aiosqlite.Row
-                async with db.execute(
-                    "SELECT id FROM files WHERE file_hash=? AND status NOT IN "
-                    "('deleted','failed','duplicate','unsupported') AND id<>?",
-                    (file_hash, file_id),
-                ) as cur:
-                    existing = await cur.fetchone()
-            if existing:
-                _move(path, settings.duplicates_dir)
-                await _set_status(file_id, "duplicate")
-                logger.info("Duplicate: %s", path.name)
-                return
+            async with _dedup_lock:
+                async with connect() as db:
+                    db.row_factory = aiosqlite.Row
+                    async with db.execute(
+                        "SELECT id FROM files WHERE file_hash=? AND status NOT IN "
+                        "('deleted','failed','duplicate','unsupported') AND id<>?",
+                        (file_hash, file_id),
+                    ) as cur:
+                        existing = await cur.fetchone()
+                if existing:
+                    _move(path, settings.duplicates_dir)
+                    await _set_status(file_id, "duplicate")
+                    logger.info("Duplicate: %s", path.name)
+                    return
 
-            # 3. Move to processing dir
-            proc_path = _move(path, settings.processing_dir)
-            if proc_path.name != path.name:
+                # Claim BEFORE releasing the lock: persist the hash and flip to
+                # 'processing' so a sibling with identical content sees this row
+                # in the duplicate query and dedupes against it. (A 'queued' row
+                # has a NULL hash and is invisible to that query, which is why
+                # the claim must happen here, not later at step 4.)
                 async with connect() as db:
                     await db.execute(
-                        "UPDATE files SET filename=? WHERE id=?",
-                        (proc_path.name, file_id),
+                        "UPDATE files SET file_hash=?, status='processing' WHERE id=?",
+                        (file_hash, file_id),
                     )
                     await db.commit()
-            path = proc_path
+
+                # 3. Move to processing dir
+                proc_path = _move(path, settings.processing_dir)
+                if proc_path.name != path.name:
+                    async with connect() as db:
+                        await db.execute(
+                            "UPDATE files SET filename=? WHERE id=?",
+                            (proc_path.name, file_id),
+                        )
+                        await db.commit()
+                path = proc_path
             # reuse the hash computed above — content unchanged by a rename/move
         else:
             proc_path = path
@@ -400,16 +423,26 @@ async def _process_file(path: Path, file_id: str):
         # Delete stale data first, then embed, then upsert+register in parallel.
         stored = await _embed_and_upload(file_id, proc_path.name, chunks, file_hash, proc_path.stat().st_size)
 
-        # 9. Move to done
-        if proc_path.exists():
-            _move(proc_path, settings.done_dir)
-
+        # 9. Mark done FIRST (the DB is the source of truth), THEN dispose of
+        # the physical file. A crash between the two leaves a clean 'done' row
+        # plus a harmless orphan file — never a 'processing' row with no file,
+        # which recover_crashed() could not resume (a permanent zombie).
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status='done', qdrant_collection=?, qdrant_chunk_count=?, ingested_at=? WHERE id=?",
                 (settings.qdrant_collection, stored, datetime.now(timezone.utc).isoformat(), file_id),
             )
             await db.commit()
+
+        if settings.delete_after_ingest:
+            # The file's content now lives only in the vector DB — remove the
+            # on-disk copy so nothing customer-supplied is retained on the box.
+            try:
+                proc_path.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("Could not delete %s after ingest: %s", proc_path.name, e)
+        elif proc_path.exists():
+            _move(proc_path, settings.done_dir)
         logger.info("Done: %s (%d chunks)", proc_path.name, stored)
 
     except Exception as exc:
@@ -430,14 +463,24 @@ async def _process_file(path: Path, file_id: str):
                     pass
         else:
             logger.exception("Failed: %s — %s", original_path.name, exc)
+            failed = None
             if proc_path is not None and proc_path.exists():
                 failed = _move(proc_path, settings.failed_dir)
                 (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
             async with connect() as db:
-                await db.execute(
-                    "UPDATE files SET status='failed', error_message=? WHERE id=?",
-                    (str(exc)[:2000], file_id),
-                )
+                if failed is not None:
+                    # Keep the DB filename in sync with the (possibly renamed)
+                    # on-disk name so retry, the .error lookup and delete all
+                    # resolve correctly.
+                    await db.execute(
+                        "UPDATE files SET status='failed', filename=?, error_message=? WHERE id=?",
+                        (failed.name, str(exc)[:2000], file_id),
+                    )
+                else:
+                    await db.execute(
+                        "UPDATE files SET status='failed', error_message=? WHERE id=?",
+                        (str(exc)[:2000], file_id),
+                    )
                 await db.commit()
     finally:
         active_paths.discard(str(original_path))
@@ -451,10 +494,11 @@ async def _delayed_nudge(seconds: int):
         _inbox_queue.put_nowait(None)
 
 
-async def _periodic_rescan(every_s: int = 60):
+async def _periodic_rescan(every_s: int = 15):
     """Belt-and-braces: rescan the inbox at a slow tick so files aren't
     stranded if the watchdog Observer thread silently dies (rare but it
-    has happened in production with mounted shares / SFTP)."""
+    has happened in production with mounted shares / SFTP). The main.py
+    lifespan also supervises and restarts a dead Observer."""
     while True:
         try:
             await asyncio.sleep(every_s)
@@ -513,25 +557,22 @@ async def _embed_and_upload(
     qdrant = _qdrant_global
     assert _embed_sem is not None and _upsert_sem is not None
 
-    # ── 1. Delete old data (Qdrant vectors + OpenWebUI entry) in parallel ──
-    async def _del_qdrant():
-        try:
-            await qdrant.delete(
-                collection_name=settings.qdrant_collection,
-                points_selector=Filter(
-                    must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
-                ),
-            )
-        except Exception as e:
-            logger.warning("Qdrant delete failed for %s: %s", file_id, e)
-
-    async def _del_owui():
-        try:
-            await openwebui.unregister(file_id)
-        except Exception as e:
-            logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
-
-    await asyncio.gather(_del_qdrant(), _del_owui())
+    # ── 1. Delete stale Qdrant vectors for this file_id ───────────────────
+    # Needed only when re-ingesting (retry / crash recovery): new points get
+    # fresh uuids, so without this the old vectors would linger. For a
+    # brand-new file_id it's a cheap index lookup that matches nothing.
+    # We do NOT unregister in OpenWebUI here: _apply_register below is an
+    # INSERT OR REPLACE that already clears and rewrites the file's rows, so a
+    # separate unregister would be redundant work for every single file.
+    try:
+        await qdrant.delete(
+            collection_name=settings.qdrant_collection,
+            points_selector=Filter(
+                must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
+            ),
+        )
+    except Exception as e:
+        logger.warning("Qdrant delete failed for %s: %s", file_id, e)
 
     # ── 2. Clean + filter chunks, then embed all batches concurrently ─────
     # Drop empty / control-char-only / too-short chunks so Ollama doesn't
@@ -545,16 +586,33 @@ async def _embed_and_upload(
     batch_size = settings.embedding_batch_size
     batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
 
+    def _is_finite_vec(vec) -> bool:
+        # bge-m3 via Ollama sometimes returns HTTP 200 with a vector that
+        # contains NaN/Inf floats (no exception raised). Cosine similarity
+        # against such a vector is NaN and silently poisons retrieval ranking
+        # for the whole collection, so these must never be upserted.
+        return bool(vec) and all(map(math.isfinite, vec))
+
     async def _embed_one(batch: list[str]) -> list[tuple[str, list]]:
         """
         Return list of (chunk, embedding) pairs. On batch failure (e.g. Ollama
         500 NaN), fall back to per-chunk embedding and silently drop chunks
-        that still error so the file as a whole still succeeds.
+        that still error so the file as a whole still succeeds. Non-finite
+        vectors are dropped in both paths.
         """
         async with _embed_sem:
             try:
                 resp = await ollama.embed(model=settings.embedding_model, input=batch)
-                return list(zip(batch, resp.embeddings))
+                pairs = []
+                for c, v in zip(batch, resp.embeddings):
+                    if _is_finite_vec(v):
+                        pairs.append((c, v))
+                    else:
+                        logger.warning(
+                            "Dropping non-finite (NaN/Inf) embedding in %s | %r",
+                            filename, c[:60].replace("\n", " "),
+                        )
+                return pairs
             except Exception as e:
                 emsg = str(e)
                 if not ("NaN" in emsg or "500" in emsg or "unsupported" in emsg.lower()):
@@ -567,7 +625,13 @@ async def _embed_and_upload(
                 for c in batch:
                     try:
                         r = await ollama.embed(model=settings.embedding_model, input=[c])
-                        pairs.append((c, r.embeddings[0]))
+                        if _is_finite_vec(r.embeddings[0]):
+                            pairs.append((c, r.embeddings[0]))
+                        else:
+                            logger.warning(
+                                "Skipping non-finite embedding in %s | %r",
+                                filename, c[:60].replace("\n", " "),
+                            )
                     except Exception as e2:
                         logger.warning(
                             "Skipping unembeddable chunk in %s: %s | %r",
@@ -657,6 +721,34 @@ async def _ensure_qdrant_collection():
             ),
         )
         logger.info("Created Qdrant collection: %s", settings.qdrant_collection)
+    else:
+        # Validate the existing collection's vector size. The collection name
+        # is shared with OpenWebUI, so it may already exist at a different
+        # dimension (e.g. created at 768 while bge-m3 emits 1024). Without this
+        # check every upsert fails opaquely and every file ends up 'failed'.
+        info = await qdrant.get_collection(settings.qdrant_collection)
+        params = info.config.params.vectors
+        size = getattr(params, "size", None)
+        if size is not None and size != settings.embedding_dimensions:
+            raise RuntimeError(
+                f"Qdrant collection '{settings.qdrant_collection}' has vector "
+                f"size {size} but EMBEDDING_DIMENSIONS={settings.embedding_dimensions}. "
+                f"Drop and recreate the collection, or fix EMBEDDING_DIMENSIONS."
+            )
+
+    # A keyword payload index on metadata.file_id turns every delete-by-file_id
+    # (re-ingest, retry, dashboard delete) from a full-collection scan into an
+    # index lookup — essential as the collection grows into the thousands.
+    # create_payload_index is idempotent, so this is safe to run every startup.
+    for field in ("metadata.file_id", "metadata.knowledge_base_id"):
+        try:
+            await qdrant.create_payload_index(
+                collection_name=settings.qdrant_collection,
+                field_name=field,
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
+        except Exception as e:
+            logger.debug("Payload index on %s not (re)created: %s", field, e)
 
 
 # ---------------------------------------------------------------------------

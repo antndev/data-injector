@@ -13,7 +13,9 @@ Drop a file into the inbox folder (or upload it from the dashboard). The watcher
 5. Upserts the resulting vectors into Qdrant
 6. Registers the file in the OpenWebUI database
 
-Files that finish successfully land in `<DATA_DIR>/done`. Files that fail land in `<DATA_DIR>/failed` with a `.error` sidecar explaining what went wrong. You can retry failed files from the dashboard.
+By default (`DELETE_AFTER_INGEST=true`) a file is **deleted from disk** as soon as its vectors are in Qdrant — the content then lives only in the vector DB, nothing customer-supplied is retained on the server. The database still records that the file was ingested (filename, hash, chunk count), so duplicate detection keeps working. Set `DELETE_AFTER_INGEST=false` to keep the old behaviour of moving finished files to `<DATA_DIR>/done`.
+
+Files that fail land in `<DATA_DIR>/failed` with a `.error` sidecar explaining what went wrong. You can retry failed files from the dashboard (a `done` file's bytes are gone, so re-running it means re-uploading).
 
 Duplicates (same hash as an already-indexed file) are moved to `<DATA_DIR>/duplicates` and skipped.
 
@@ -36,7 +38,7 @@ QDRANT_KNOWLEDGE_BASE_ID=        # the UUID of the knowledge base in OpenWebUI
 # Ollama
 OLLAMA_HOST=http://host.docker.internal:11434
 EMBEDDING_MODEL=bge-m3:latest
-EMBEDDING_DIMENSIONS=768
+EMBEDDING_DIMENSIONS=1024   # must match the model — bge-m3 emits 1024
 
 # OpenWebUI
 OPENWEBUI_USER_ID=               # your user ID from the OpenWebUI database
@@ -51,9 +53,14 @@ After 5 wrong attempts the login is locked for 5 minutes. Audit logs land in `<D
 
 ## Uploading files
 
-Drop files directly onto the dashboard's upload zone or click it to browse. Folders are supported — the app recurses into them and uploads only the files inside. Each file is queued and starts processing as soon as it finishes uploading, without waiting for the rest. Large files (GBs) are streamed in chunks so memory stays flat.
+Drop files directly onto the dashboard's upload zone, or click it to browse (folders are supported — the app recurses into them). Up to three files upload at once; each one starts processing the instant it finishes, without waiting for the rest. Files are sent in chunks (8 MiB), so memory stays flat even for multi-GB files.
 
-If you close the browser tab while an upload is in progress, a confirmation dialog appears first. If you force-close anyway, the partial upload is discarded server-side and the inbox is left clean.
+**Uploads are resumable.** Each partial upload is held server-side as a `.part` file whose size is the resume cursor, and tracked in the browser's IndexedDB. So an interrupted upload continues from where it stopped rather than restarting:
+
+- **Page refresh** — incomplete uploads reappear as "resume" chips in the sidebar; on Chromium they continue automatically once you confirm, elsewhere you re-pick the same file.
+- **Browser restart** — the durable `.part` survives. On Chromium (File System Access API) click the resume chip and approve the one-time file-access prompt; the upload continues from the server's offset, sending only the remaining bytes. On Firefox/Safari, re-select the same file from the chip — it still resumes from the server offset, never from zero.
+
+Abandoned partials are swept after `UPLOAD_TTL_HOURS` (default 48 h) of inactivity. Closing the tab mid-upload shows a confirmation dialog first.
 
 ## Supported file types
 
@@ -84,6 +91,11 @@ From the dashboard you can:
 | `CHUNK_SIZE` | 1024 | Characters per chunk |
 | `CHUNK_OVERLAP` | 100 | Overlap between consecutive chunks |
 | `STABILITY_WAIT_S` | 0 | Seconds to wait after a file appears before touching it (0 = disabled, fine for SFTP / atomic copies) |
+| `DELETE_AFTER_INGEST` | true | Delete the file once its vectors are stored (content lives only in the vector DB). `false` keeps it in `<DATA_DIR>/done` |
+| `UPLOAD_CHUNK_BYTES` | 8388608 | Chunk size the dashboard uploads with (8 MiB) |
+| `UPLOAD_TTL_HOURS` | 48 | Reap abandoned upload partials after this many hours of inactivity |
+| `UPLOAD_MAX_BYTES` | 0 | Reject uploads larger than this; 0 = unlimited |
+| `OPENWEBUI_DB_PATH` | /openwebui-data/webui.db | Path to OpenWebUI's shared sqlite DB inside the container |
 
 Higher concurrency helps when embedding is the bottleneck. If Ollama is slow, raising `EMBEDDING_BATCH_SIZE` usually helps more than raising `WORKER_CONCURRENCY`.
 

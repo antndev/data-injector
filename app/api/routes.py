@@ -1,16 +1,19 @@
 import json
+import os
 import re
 import secrets
 import shutil
 import asyncio
 import logging
 import time
+import uuid
 from collections import defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
 import aiosqlite
-from fastapi import APIRouter, HTTPException, Request, Form
+from fastapi import APIRouter, HTTPException, Request, Form, Header, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -38,6 +41,13 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 def _check_uuid(file_id: str) -> None:
     if not _UUID_RE.match(file_id):
         raise HTTPException(400, "Invalid file id")
+
+
+def _like_escape(s: str) -> str:
+    """Escape LIKE wildcards so a search for 'a_b' or '50%' matches literally
+    instead of '_' meaning any-char and '%' meaning anything. Paired with
+    LIKE ? ESCAPE '\\' in the query."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _client_ip(request: Request) -> str:
@@ -124,6 +134,13 @@ async def login(request: Request, password: str = Form(default="")):
         return RedirectResponse("/", status_code=303)
 
     count = _record_failure(ip)
+    if count >= _MAX_ATTEMPTS:
+        # This attempt tripped the lockout — show the countdown screen, not a
+        # plain "wrong password", so the user knows why the next try is blocked.
+        audit.warning("login-locked: %s after %d attempts", ip, _MAX_ATTEMPTS)
+        return RedirectResponse(
+            f"/login?error=locked&wait={_LOCKOUT_SECONDS}", status_code=303
+        )
     audit.warning("login-failure from %s (attempt %d/%d)", ip, count, _MAX_ATTEMPTS)
     return RedirectResponse("/login?error=1", status_code=303)
 
@@ -218,7 +235,7 @@ async def list_file_ids(status: StatusFilter | None = None, search: str | None =
     if status:
         conds.append("status=?"); params.append(status)
     if search:
-        conds.append("filename LIKE ?"); params.append(f"%{search}%")
+        conds.append("filename LIKE ? ESCAPE '\\'"); params.append(f"%{_like_escape(search)}%")
     if conds:
         query += " WHERE " + " AND ".join(conds)
     query += " ORDER BY created_at DESC"
@@ -242,7 +259,7 @@ async def list_files(
     if status:
         conds.append("status=?"); params.append(status)
     if search:
-        conds.append("filename LIKE ?"); params.append(f"%{search}%")
+        conds.append("filename LIKE ? ESCAPE '\\'"); params.append(f"%{_like_escape(search)}%")
     if conds:
         query += " WHERE " + " AND ".join(conds)
     limit = max(1, min(limit, 2000))
@@ -386,3 +403,208 @@ async def bulk_retry(body: BulkBody):
 
     results = await asyncio.gather(*[_one(fid) for fid in body.ids])
     return {"ok": True, "queued": sum(results)}
+
+
+# ───────────────────────── Resumable upload ─────────────────────────────────
+# A tus-style offset protocol. Each upload is staged as <id>.part (the bytes —
+# whose size IS the resume cursor) plus <id>.json (filename / size /
+# fingerprint). The .part survives a server restart, so an interrupted upload
+# resumes from its current size. On completion the .part is atomically renamed
+# into the inbox, where the existing watcher/worker pick it up. The auth
+# middleware never reads the body, so PATCH's raw stream is intact.
+
+_UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_UPLOAD_INNER_BLOCK = 1 << 20  # 1 MiB write blocks — flat memory for huge files
+_MAX_NAME_BYTES = 200          # safe under the 255-byte ext4/ntfs limit
+
+# One asyncio.Lock per in-flight upload_id. A single Uvicorn worker process
+# makes this airtight: it serialises concurrent PATCHes to the same upload
+# (e.g. two tabs resuming the same file) so the offset-check → append →
+# finalize sequence can't interleave on the .part's size (a TOCTOU).
+_upload_locks: dict[str, asyncio.Lock] = {}
+
+
+def _safe_filename(raw: str | None) -> str:
+    """Reduce a browser-supplied filename to a single safe basename."""
+    # Browsers may send forward- or backslash paths (webkitdirectory uploads).
+    name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(c for c in name if c >= " " and c != "\x7f")  # strip control/DEL
+    name = name.strip(" .")  # leading/trailing dots & spaces break Windows shares
+    if not name or name in (".", "..") or len(name) > _MAX_NAME_BYTES:
+        if len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
+            ext = Path(name).suffix[:20]
+            stem = Path(name).stem
+            stem = stem.encode("utf-8")[: _MAX_NAME_BYTES - len(ext.encode("utf-8"))]
+            name = stem.decode("utf-8", errors="ignore").rstrip() + ext
+        if not name or name in (".", ".."):
+            name = "unnamed"
+    return name
+
+
+def _check_upload_id(upload_id: str) -> None:
+    if not _UPLOAD_ID_RE.match(upload_id):
+        raise HTTPException(400, "Invalid upload id")
+
+
+def _staging_paths(upload_id: str) -> tuple[Path, Path]:
+    d = settings.uploads_tmp_dir
+    return d / f"{upload_id}.part", d / f"{upload_id}.json"
+
+
+def _lock_for(upload_id: str) -> asyncio.Lock:
+    lock = _upload_locks.get(upload_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _upload_locks[upload_id] = lock
+    return lock
+
+
+def _inbox_dest(name: str) -> Path:
+    """Collision-safe destination in the inbox (same scheme as worker._move)."""
+    dest = settings.inbox_dir / name
+    counter = 1
+    while dest.exists():
+        dest = settings.inbox_dir / f"{Path(name).stem}_{counter}{Path(name).suffix}"
+        counter += 1
+    return dest
+
+
+def _read_sidecar(sidecar: Path) -> dict | None:
+    try:
+        return json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+class UploadCreate(BaseModel):
+    filename: str
+    size: int
+    fingerprint: str = ""
+
+
+@router.post("/uploads")
+async def create_upload(body: UploadCreate):
+    """Create — or resume — an upload. Returns the upload_id and how many bytes
+    the server already holds (0 for a fresh upload)."""
+    if body.size <= 0:
+        raise HTTPException(400, "size must be > 0")
+    if settings.upload_max_bytes and body.size > settings.upload_max_bytes:
+        raise HTTPException(413, "File exceeds the maximum upload size")
+
+    name = _safe_filename(body.filename)
+    settings.uploads_tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Idempotent resume: a staged sidecar with the same fingerprint AND declared
+    # size is "the same file" — reuse it and report its current offset, so a
+    # client that lost its local record still resumes instead of restarting.
+    if body.fingerprint:
+        for sidecar in settings.uploads_tmp_dir.glob("*.json"):
+            meta = _read_sidecar(sidecar)
+            if not meta:
+                continue
+            if meta.get("fingerprint") == body.fingerprint and meta.get("size") == body.size:
+                uid = sidecar.stem
+                part, _ = _staging_paths(uid)
+                return {"upload_id": uid, "offset": part.stat().st_size if part.exists() else 0}
+
+    upload_id = uuid.uuid4().hex
+    part, sidecar = _staging_paths(upload_id)
+    part.touch()
+    sidecar.write_text(json.dumps({
+        "filename": name,
+        "size": body.size,
+        "fingerprint": body.fingerprint,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }), encoding="utf-8")
+    return {"upload_id": upload_id, "offset": 0}
+
+
+@router.head("/uploads/{upload_id}")
+async def head_upload(upload_id: str):
+    """Authoritative resume offset for a staged upload."""
+    _check_upload_id(upload_id)
+    part, sidecar = _staging_paths(upload_id)
+    meta = _read_sidecar(sidecar) if sidecar.exists() else None
+    if meta is None or not part.exists():
+        raise HTTPException(404, "No such upload")
+    return Response(status_code=200, headers={
+        "Upload-Offset": str(part.stat().st_size),
+        "Upload-Length": str(meta.get("size", 0)),
+        "Cache-Control": "no-store",
+    })
+
+
+@router.patch("/uploads/{upload_id}")
+async def patch_upload(
+    upload_id: str,
+    request: Request,
+    upload_offset: int = Header(...),
+):
+    """Append the request body at `Upload-Offset`. Returns 204 + the new
+    Upload-Offset; on a stale offset returns 409 + the true offset; on the
+    final chunk atomically moves the file into the inbox and adds
+    Upload-Complete: 1."""
+    _check_upload_id(upload_id)
+    part, sidecar = _staging_paths(upload_id)
+    meta = _read_sidecar(sidecar) if sidecar.exists() else None
+    if meta is None or not part.exists():
+        raise HTTPException(404, "No such upload")
+    size = int(meta.get("size", 0))
+
+    async with _lock_for(upload_id):
+        # Re-check under the lock: a concurrent PATCH may have finalized (and
+        # moved the .part away) while we waited.
+        if not part.exists() or not sidecar.exists():
+            raise HTTPException(404, "No such upload")
+        real = part.stat().st_size
+        if upload_offset != real:
+            # Out of sync — give the client the truth so it can re-slice.
+            return Response(status_code=409, headers={"Upload-Offset": str(real)})
+
+        overshoot = False
+        with part.open("ab") as fh:
+            written = 0
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                room = size - (real + written)
+                if room <= 0:
+                    overshoot = True
+                    break
+                if len(chunk) > room:
+                    fh.write(chunk[:room]); written += room
+                    overshoot = True
+                    break
+                fh.write(chunk); written += len(chunk)
+            fh.flush()
+            os.fsync(fh.fileno())
+
+        if overshoot:
+            raise HTTPException(400, "Upload exceeded its declared size")
+
+        offset = part.stat().st_size
+        if offset < size:
+            return Response(status_code=204, headers={"Upload-Offset": str(offset)})
+
+        # Complete — finalize into the inbox atomically (same /data filesystem).
+        dest = _inbox_dest(_safe_filename(meta.get("filename")))
+        os.replace(part, dest)
+        sidecar.unlink(missing_ok=True)
+        _upload_locks.pop(upload_id, None)
+        events.push("INFO", f"Upload complete: {dest.name}")
+        trigger_scan()  # start processing this file immediately
+        return Response(status_code=204, headers={
+            "Upload-Offset": str(size),
+            "Upload-Complete": "1",
+        })
+
+
+@router.delete("/uploads/{upload_id}")
+async def cancel_upload(upload_id: str):
+    """Discard a staged upload."""
+    _check_upload_id(upload_id)
+    part, sidecar = _staging_paths(upload_id)
+    part.unlink(missing_ok=True)
+    sidecar.unlink(missing_ok=True)
+    _upload_locks.pop(upload_id, None)
+    return Response(status_code=204)
