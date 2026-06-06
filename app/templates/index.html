@@ -1418,6 +1418,7 @@ load();
     const live=[];
     for(const s of saved){
       if(jobs.has(s.fp))continue;
+      if(!s.uploadId){await jobDel(s.fp);continue;}   // POST never completed → no server partial, nothing to resume
       let off=0,exists=true,reachable=true;
       try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;else reachable=false;}catch{reachable=false;}
       if(!reachable)continue;                       // transient error — don't show a bogus 0% chip; retry next refresh
@@ -1448,21 +1449,32 @@ load();
     // GC folder records whose jobs are all gone
     for(const d of dirs){if(!groups.has(d.gid))await dirsDel(d.gid);}
   }
+  // Re-pick a whole folder via a one-shot webkitdirectory <input> (works in
+  // every browser, incl. Firefox/Safari) → returns its files.
+  function pickDir(){return new Promise(res=>{const inp=document.createElement('input');inp.type='file';inp.webkitdirectory=true;inp.onchange=()=>res([...inp.files]);inp.click();});}
   async function resumeFolder(gid,d,group,chip){
-    let dir=d&&d.handle;
-    if(!dir){                                    // no stored handle (webkitdirectory/drag) → re-pick the folder
-      if(!hasDir)return;
-      try{dir=await window.showDirectoryPicker();}catch{return;}
-    }else{
-      try{const p=await dir.requestPermission({mode:'read'});if(p!=='granted')return;}  // direct: keeps the click gesture
-      catch(e){console.error('dir perm',e);return;}
-    }
-    // re-walk the directory ONCE → map fp → {file,handle}; one grant covers all files
+    // Build fp → {file,handle} from whatever source we can get the bytes again.
     const map=new Map();
-    const walk=async dh=>{for await(const e of dh.values()){if(e.kind==='file'){try{const f=await e.getFile();map.set(fpOf(f),{file:f,handle:e});}catch{}}else if(e.kind==='directory')await walk(e);}};
-    try{await walk(dir);}catch(e){console.error('rewalk',e);return;}
+    let dir=d&&d.handle;
+    if(dir){
+      let ok=false;
+      try{ok=(await dir.requestPermission({mode:'read'}))==='granted';}catch(e){console.error('dir perm',e);}
+      if(!ok)dir=null;   // grant denied / lapsed → fall through to a fresh re-pick
+    }
+    if(dir){
+      const walk=async dh=>{for await(const e of dh.values()){if(e.kind==='file'){try{const f=await e.getFile();map.set(fpOf(f),{file:f,handle:e});}catch{}}else if(e.kind==='directory')await walk(e);}};
+      try{await walk(dir);}catch(e){console.error('rewalk',e);return;}
+    }else if(hasDir){                            // Chromium without a usable stored handle → pick the folder again
+      try{const dh=await window.showDirectoryPicker();const walk=async d2=>{for await(const e of d2.values()){if(e.kind==='file'){try{const f=await e.getFile();map.set(fpOf(f),{file:f,handle:e});}catch{}}else if(e.kind==='directory')await walk(e);}};await walk(dh);}catch{return;}
+    }else{                                       // Firefox/Safari → one webkitdirectory re-pick, no handles
+      const files=await pickDir();if(!files||!files.length)return;
+      for(const f of files)map.set(fpOf(f),{file:f,handle:null});
+    }
+    // resume each file of the group from its server offset; warn if the folder didn't match
+    let matched=0;
+    for(const s of group){const m=map.get(s.fp);if(m){matched++;await enqueue(m.file,m.handle,true,gid);}}
+    if(!matched){await showModal(t('m.diffTitle'),t('m.diffMsg'),t('close'),false);return;}
     chip.remove();
-    for(const s of group){const m=map.get(s.fp);if(m)await enqueue(m.file,m.handle,true,gid);}  // resume each from its server offset
   }
 
   // ── Wiring ──
@@ -1481,7 +1493,17 @@ load();
   document.addEventListener('click',e=>{if(!e.target.closest('.dz-pick'))showMenu(false);});
   document.addEventListener('keydown',e=>{if(e.key==='Escape')showMenu(false);});
   dzInput.addEventListener('change',()=>{[...dzInput.files].forEach(f=>enqueue(f,null));dzInput.value='';});
-  dzDir.addEventListener('change',()=>{[...dzDir.files].forEach(f=>enqueue(f,null));dzDir.value='';});
+  dzDir.addEventListener('change',async()=>{
+    // webkitdirectory folder pick (Firefox/Safari + Chromium fallback): give the
+    // whole folder a shared group id so it resumes as ONE folder (re-pick), not
+    // file-by-file. No handle here — resumeFolder re-picks via webkitdirectory.
+    const files=[...dzDir.files];dzDir.value='';
+    if(!files.length)return;
+    const root=(files[0].webkitRelativePath||'').split('/')[0]||'Ordner';
+    const gid=newGid();
+    try{await dirsPut({gid,name:root,handle:null});}catch{}
+    for(const f of files)await enqueue(f,null,false,gid);
+  });
   $('up-cancel').addEventListener('click',cancelAll);
   window.addEventListener('beforeunload',e=>{if([...jobs.values()].some(j=>j.state==='up'||j.state==='wait')){e.preventDefault();e.returnValue='';}});
 
