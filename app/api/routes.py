@@ -492,6 +492,33 @@ class UploadCreate(BaseModel):
     fingerprint: str = ""
 
 
+class PrecheckBody(BaseModel):
+    hashes: list[str]
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@router.post("/uploads/precheck")
+async def precheck_uploads(body: PrecheckBody):
+    """Given content SHA-256 hashes, return which are ALREADY ingested (or in
+    flight). The dashboard hashes each file locally and calls this before
+    uploading, so unchanged files in a re-uploaded folder are skipped entirely
+    instead of wasting upload bandwidth only to be flagged a duplicate on
+    arrival. Dedup is still enforced server-side for anything that does upload."""
+    hashes = list(dict.fromkeys(h for h in body.hashes if _SHA256_RE.match(h or "")))[:2000]
+    if not hashes:
+        return {"known": []}
+    placeholders = ",".join("?" * len(hashes))
+    q = (f"SELECT DISTINCT file_hash FROM files WHERE file_hash IN ({placeholders}) "
+         "AND status NOT IN ('deleted','failed','duplicate','unsupported')")
+    async with connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(q, hashes) as cur:
+            rows = await cur.fetchall()
+    return {"known": [r["file_hash"] for r in rows]}
+
+
 @router.post("/uploads")
 async def create_upload(body: UploadCreate):
     """Create — or resume — an upload. Returns the upload_id and how many bytes
