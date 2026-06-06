@@ -15,9 +15,9 @@ Drop a file into the inbox folder (or upload it from the dashboard). The watcher
 
 By default (`DELETE_AFTER_INGEST=true`) a file is **deleted from disk** as soon as its vectors are in Qdrant — the content then lives only in the vector DB, nothing customer-supplied is retained on the server. The database still records that the file was ingested (filename, hash, chunk count), so duplicate detection keeps working. Set `DELETE_AFTER_INGEST=false` to keep the old behaviour of moving finished files to `<DATA_DIR>/done`.
 
-Files that fail land in `<DATA_DIR>/failed` with a `.error` sidecar explaining what went wrong. You can retry failed files from the dashboard (a `done` file's bytes are gone, so re-running it means re-uploading).
+With `DELETE_AFTER_INGEST=true`, **duplicates and unsupported files are also removed from disk** (their database row still records what happened) — so the only customer data retained anywhere is the extracted text + vectors inside Qdrant. With it `false`, duplicates go to `<DATA_DIR>/duplicates` and unsupported files to `<DATA_DIR>/unsupported`.
 
-Duplicates (same hash as an already-indexed file) are moved to `<DATA_DIR>/duplicates` and skipped.
+Files that fail land in `<DATA_DIR>/failed` with a `.error` sidecar explaining what went wrong (failures are kept regardless, so you can diagnose and retry them). You can retry failed files from the dashboard; a `done` file's bytes are gone, so re-running it means re-uploading.
 
 ## Setup
 

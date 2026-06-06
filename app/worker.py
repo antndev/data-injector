@@ -303,7 +303,7 @@ async def _process_file(path: Path, file_id: str):
 
         # 1. Unsupported extension
         if ext in UNSUPPORTED_EXTS or ext not in SUPPORTED:
-            _move(path, settings.unsupported_dir)
+            _dispose(path, settings.unsupported_dir)
             await _set_status(file_id, "unsupported")
             logger.info("Unsupported: %s", path.name)
             return
@@ -322,7 +322,7 @@ async def _process_file(path: Path, file_id: str):
                     ) as cur:
                         existing = await cur.fetchone()
                 if existing:
-                    _move(path, settings.duplicates_dir)
+                    _dispose(path, settings.duplicates_dir)
                     await _set_status(file_id, "duplicate")
                     logger.info("Duplicate: %s", path.name)
                     return
@@ -769,6 +769,20 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):  # 1 MiB blocks
             h.update(block)
     return h.hexdigest()
+
+
+def _dispose(path: Path, fallback_dir: Path) -> None:
+    """For a resolved-but-not-ingested file (duplicate / unsupported): delete it
+    when delete_after_ingest is on, so nothing customer-supplied is retained on
+    disk — the DB row still records what happened. Otherwise move it to its
+    category dir for inspection."""
+    if settings.delete_after_ingest:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    else:
+        _move(path, fallback_dir)
 
 
 def _move(src: Path, dest_dir: Path) -> Path:
