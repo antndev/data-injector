@@ -237,16 +237,19 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 
 #empty{padding:80px;text-align:center;color:var(--dim)}
 
-/* progress toast */
-#toast{
+/* progress toasts (stacked bottom-right) */
+#toast-stack{
   position:fixed;bottom:24px;right:24px;z-index:200;
+  display:flex;flex-direction:column;gap:10px;align-items:flex-end;
+  pointer-events:none;
+}
+.toast{
   background:var(--panel);border:1px solid var(--line);border-radius:10px;
   padding:14px 18px;min-width:220px;max-width:300px;
   box-shadow:0 8px 32px rgba(0,0,0,.5);
-  display:none;flex-direction:column;gap:8px;
-  animation:pop .2s ease-out;
+  display:flex;flex-direction:column;gap:8px;
+  animation:pop .2s ease-out;transition:opacity .2s;pointer-events:auto;
 }
-#toast.show{display:flex}
 .toast-title{font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px;color:var(--text)}
 .toast-title svg{width:14px;height:14px;flex-shrink:0}
 .toast-bar-wrap{background:var(--line);border-radius:3px;height:3px}
@@ -287,7 +290,20 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 #drop-zone svg{width:16px;height:16px;flex-shrink:0;color:var(--dim)}
 #drop-zone:hover svg,#drop-zone.drag svg{color:var(--blue)}
 #drop-zone .dz-text{font-size:12px;color:var(--mute)}
-#dz-input{display:none}
+#dz-input,#dz-dir{display:none}
+.dz-actions{margin:2px 12px 0;display:flex;align-items:center;gap:8px}
+.dz-actions button{
+  background:none;border:0;color:var(--mute);font:inherit;font-size:11px;
+  cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;
+}
+.dz-actions button:hover{color:var(--blue)}
+.dz-sep{color:var(--dim);font-size:11px}
+.up-foot{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#up-cancel{
+  background:none;border:0;color:var(--dim);font:inherit;font-size:11px;
+  cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;flex-shrink:0;
+}
+#up-cancel:hover{color:var(--red)}
 /* resume chips (shown after a refresh / browser restart) */
 #resume-bar{margin:0 12px;display:flex;flex-direction:column;gap:5px}
 #resume-bar:empty{display:none}
@@ -348,8 +364,14 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <polyline points="17 8 12 3 7 8"/>
         <line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
-      <div class="dz-text" data-i18n="dz.text">Dateien/Ordner ablegen oder klicken</div>
+      <div class="dz-text" data-i18n="dz.text">Dateien/Ordner hierher ziehen</div>
       <input id="dz-input" type="file" multiple>
+      <input id="dz-dir" type="file" webkitdirectory multiple>
+    </div>
+    <div class="dz-actions">
+      <button id="pick-files" type="button" data-i18n="dz.files">Dateien wählen</button>
+      <span class="dz-sep">·</span>
+      <button id="pick-folder" type="button" data-i18n="dz.folder">Ordner wählen</button>
     </div>
     <div id="resume-bar"></div>
     <div id="upload-progress">
@@ -358,7 +380,10 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <span id="up-pct">0%</span>
       </div>
       <div id="up-bar-wrap"><div id="up-bar"></div></div>
-      <div id="up-stats"></div>
+      <div class="up-foot">
+        <span id="up-stats"></span>
+        <button id="up-cancel" type="button" data-i18n="cancel">Abbrechen</button>
+      </div>
     </div>
   </div>
 
@@ -446,14 +471,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
   </div>
 </div>
 
-<div id="toast">
-  <div class="toast-title">
-    <svg id="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-    <span id="toast-title" data-i18n="toast.deleting">Wird gelöscht…</span>
-  </div>
-  <div class="toast-bar-wrap"><div class="toast-bar" id="toast-bar"></div></div>
-  <div class="toast-sub" id="toast-sub"></div>
-</div>
+<div id="toast-stack"></div>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -473,7 +491,7 @@ const I18N={
  de:{
   'nav.all':'Alle','nav.queued':'Warteschlange','nav.processing':'In Arbeit','nav.done':'Fertig','nav.failed':'Fehlgeschlagen','nav.duplicate':'Duplikate','nav.unsupported':'Nicht unterstützt',
   'cleanup':'Aufräumen','cleanup.failed':'Alle fehlgeschlagenen löschen','cleanup.dup':'Alle Duplikate löschen','cleanup.uns':'Alle nicht unterstützten löschen',
-  'dz.text':'Dateien/Ordner ablegen oder klicken','activity':'Aktivität','clear':'Leeren',
+  'dz.text':'Dateien/Ordner hierher ziehen','dz.files':'Dateien wählen','dz.folder':'Ordner wählen','activity':'Aktivität','clear':'Leeren',
   'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden','lang.switch':'Sprache wechseln',
   'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.session':'Sitzung ·','rate.up':'hoch','rate.done':'fertig','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
   'th.filename':'Dateiname','th.status':'Status','th.chunks':'Chunks','th.size':'Größe','th.date':'Datum',
@@ -481,7 +499,7 @@ const I18N={
   'status.queued':'Warteschlange','status.processing':'In Arbeit','status.done':'Fertig','status.failed':'Fehlgeschlagen','status.duplicate':'Duplikat','status.unsupported':'Nicht unterstützt','status.deleted':'Gelöscht',
   'err.none':'(keine Fehlermeldung gespeichert)','err.load':'Fehler konnte nicht geladen werden',
   'toast.deleting':'Wird gelöscht…','toast.deleted':'Gelöscht','toast.delfail':'Löschen fehlgeschlagen','toast.filedel':'Datei gelöscht',
-  'up.uploading':'Lädt hoch…','indexed':'bereits indexiert','resume':'fortsetzen',
+  'up.uploading':'Lädt hoch…','up.cancelled':'Abgebrochen','indexed':'bereits indexiert','resume':'fortsetzen',
   'file.one':'Datei','file.many':'Dateien','hint.matches':'Treffer','hint.files':'Dateien',
   'm.retryTitle':'Dateien erneut verarbeiten','m.retryMsg':'{n} {files} erneut verarbeiten?',
   'm.delTitle':'Dateien löschen','m.delMsg':'{n} {files} löschen?\nEndgültig aus Knowledge Base, Datenbank und Festplatte entfernt.',
@@ -496,7 +514,7 @@ const I18N={
  en:{
   'nav.all':'All','nav.queued':'Queued','nav.processing':'Processing','nav.done':'Done','nav.failed':'Failed','nav.duplicate':'Duplicates','nav.unsupported':'Unsupported',
   'cleanup':'Cleanup','cleanup.failed':'Delete all failed','cleanup.dup':'Delete all duplicates','cleanup.uns':'Delete all unsupported',
-  'dz.text':'Drop files/folders or click to upload','activity':'Activity','clear':'Clear',
+  'dz.text':'Drag files/folders here','dz.files':'Choose files','dz.folder':'Choose folder','activity':'Activity','clear':'Clear',
   'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out','lang.switch':'Switch language',
   'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.session':'Session ·','rate.up':'up','rate.done':'done','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
   'th.filename':'Filename','th.status':'Status','th.chunks':'Chunks','th.size':'Size','th.date':'Date',
@@ -504,7 +522,7 @@ const I18N={
   'status.queued':'Queued','status.processing':'Processing','status.done':'Done','status.failed':'Failed','status.duplicate':'Duplicate','status.unsupported':'Unsupported','status.deleted':'Deleted',
   'err.none':'(no error message saved)','err.load':'Could not load error',
   'toast.deleting':'Deleting…','toast.deleted':'Deleted','toast.delfail':'Delete failed','toast.filedel':'File deleted',
-  'up.uploading':'Uploading…','indexed':'already indexed','resume':'resume',
+  'up.uploading':'Uploading…','up.cancelled':'Cancelled','indexed':'already indexed','resume':'resume',
   'file.one':'file','file.many':'files','hint.matches':'matches','hint.files':'files',
   'm.retryTitle':'Retry files','m.retryMsg':'Retry {n} {files}?',
   'm.delTitle':'Delete files','m.delMsg':'Delete {n} {files}?\nPermanently removed from knowledge base, database and disk.',
@@ -836,50 +854,40 @@ $('all-cb').onchange=async e=>{
   }
 };
 
-// ── Toast progress ────────────────────────────────────────────────────────
-let toastTimer=null;
-let _deleteStart=0;
-function toastProgress(title,done,total){
-  clearTimeout(toastTimer);
-  const pct=total>0?Math.round(done/total*100):0;
-  $('toast-title').textContent=title;
-  $('toast-bar').style.width=pct+'%';
-  $('toast-bar').style.background='var(--blue)';
-  let sub=total>1?`${done} / ${total} ${t('hint.files')}`:'';
-  if(done>0&&total>1){
-    const elapsed=(Date.now()-_deleteStart)/1000;
-    const rate=done/elapsed;
-    const remaining=total-done;
-    if(rate>0&&remaining>0){
-      const eta=Math.ceil(remaining/rate);
-      sub+=` · ~${eta}s ${LANG==='de'?'übrig':'left'}`;
-    }
+// ── Toasts (stackable, bottom-right) ──────────────────────────────────────
+// Each long-running action gets its OWN toast, so several deletes can run and
+// be shown at the same time instead of clobbering a single shared toast.
+const _DEL_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
+function makeToast(){
+  const el=document.createElement('div');
+  el.className='toast show';
+  el.innerHTML=`<div class="toast-title">${_DEL_SVG}<span class="tt-title"></span></div><div class="toast-bar-wrap"><div class="toast-bar"></div></div><div class="toast-sub"></div>`;
+  $('toast-stack').appendChild(el);
+  const titleEl=el.querySelector('.tt-title'),barEl=el.querySelector('.toast-bar'),subEl=el.querySelector('.toast-sub');
+  let start=Date.now(),timer=null;
+  function progress(title,done,total){
+    clearTimeout(timer);
+    barEl.style.width=(total>0?Math.round(done/total*100):0)+'%';barEl.style.background='var(--blue)';
+    titleEl.textContent=title;
+    let sub=total>1?`${done} / ${total} ${t('hint.files')}`:'';
+    if(done>0&&total>1){const e2=(Date.now()-start)/1000,rate=done/e2,rem=total-done;if(rate>0&&rem>0)sub+=` · ~${Math.ceil(rem/rate)}s ${LANG==='de'?'übrig':'left'}`;}
+    subEl.textContent=sub;
   }
-  $('toast-sub').textContent=sub;
-  $('toast').classList.add('show');
+  function finish(msg,color,n,ttl){
+    clearTimeout(timer);titleEl.textContent=msg+(n?` (${n})`:'');barEl.style.width='100%';barEl.style.background=color;subEl.textContent='';
+    timer=setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),200);},ttl);
+  }
+  return {progress,reset:()=>{start=Date.now();},done:(m,n)=>finish(m,'var(--green)',n,2500),error:m=>finish(m,'var(--red)',0,3000)};
 }
-function toastDone(msg,n){
-  $('toast-title').textContent=msg+(n?' ('+n+')':'');
-  $('toast-bar').style.width='100%';
-  $('toast-bar').style.background='var(--green)';
-  $('toast-sub').textContent='';
-  toastTimer=setTimeout(()=>$('toast').classList.remove('show'),2500);
-}
-function toastError(msg){
-  $('toast-title').textContent=msg;
-  $('toast-bar').style.width='100%';
-  $('toast-bar').style.background='var(--red)';
-  $('toast-sub').textContent='';
-  toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3000);
-}
+// One-off transient toast (info/error with no progress).
+function toastError(msg){makeToast().error(msg);}
 
 // Batch-deletes ids with live progress updates, returns count deleted
 async function deleteWithProgress(ids){
   const total=ids.length;
   const BATCH=50;
   let done=0;
-  _deleteStart=Date.now();
-  toastProgress(t('toast.deleting'),0,total);
+  const to=makeToast();to.reset();to.progress(t('toast.deleting'),0,total);
   try{
     for(let i=0;i<ids.length;i+=BATCH){
       const batch=ids.slice(i,i+BATCH);
@@ -888,11 +896,11 @@ async function deleteWithProgress(ids){
         body:JSON.stringify({ids:batch})
       }).then(r=>r.json());
       done+=res.deleted??batch.length;
-      toastProgress(t('toast.deleting'),done,total);
+      to.progress(t('toast.deleting'),done,total);
     }
-    toastDone(t('toast.deleted'),done);
+    to.done(t('toast.deleted'),done);
   }catch(e){
-    toastError(t('toast.delfail'));
+    to.error(t('toast.delfail'));
     console.error(e);
   }
   return done;
@@ -914,12 +922,11 @@ $('b-del').onclick=async()=>{
 
 async function del(id){
   if(!await showModal(t('m.delOneTitle'),t('m.delOneMsg')))return;
-  _deleteStart=Date.now();
-  toastProgress(t('toast.deleting'),0,1);
+  const to=makeToast();to.reset();to.progress(t('toast.deleting'),0,1);
   try{
     await fetch(`/files/${id}?delete_physical=true`,{method:'DELETE'});
-    toastDone(t('toast.filedel'));
-  }catch(e){toastError(t('toast.delfail'));}
+    to.done(t('toast.filedel'));
+  }catch(e){to.error(t('toast.delfail'));}
   load();
 }
 async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
@@ -1107,7 +1114,8 @@ load();
   const CONCURRENCY=3;               // parallel files
   const MAX_RETRY=6;
   const hasFS='showOpenFilePicker' in window;
-  const dz=$('drop-zone'),dzInput=$('dz-input'),resumeBar=$('resume-bar');
+  const hasDir='showDirectoryPicker' in window;
+  const dz=$('drop-zone'),dzInput=$('dz-input'),dzDir=$('dz-dir'),resumeBar=$('resume-bar');
   const upProgress=$('upload-progress'),upBar=$('up-bar'),upPct=$('up-pct'),
         upLabel=$('up-label'),upStats=$('up-stats');
 
@@ -1137,8 +1145,8 @@ load();
   const serial=j=>({fp:j.fp,name:j.name,size:j.size,lastModified:j.lastModified,uploadId:j.uploadId,offset:j.offset,handle:j.handle||null});
 
   // ── Session state ──
-  const jobs=new Map();   // fp -> {file,handle,fp,name,size,lastModified,offset,uploadId,state}
-  let running=0,_ema=0,_emaT=0,_emaLoaded=0;
+  const jobs=new Map();   // fp -> {file,handle,fp,name,size,lastModified,offset,uploadId,state,ctrl}
+  let running=0,_ema=0,_emaT=0,_emaLoaded=0,cancelled=false;
 
   function showProg(){upProgress.classList.add('show');upBar.classList.remove('done','err');}
   function updateUI(){
@@ -1153,17 +1161,19 @@ load();
   }
 
   function schedule(){
+    if(cancelled)return;
     while(running<CONCURRENCY){
       const j=[...jobs.values()].find(x=>x.state==='wait'&&x.file);
       if(!j)break;
-      j.state='up';running++;
-      uploadJob(j).then(()=>{j.state='done';},e=>{j.state='err';console.error('upload',j.name,e);})
+      j.state='up';j.ctrl=new AbortController();running++;
+      uploadJob(j).then(()=>{j.state='done';},e=>{j.state='err';if(!cancelled)console.error('upload',j.name,e);})
         .finally(()=>{running--;schedule();idle();});
     }
     updateUI();
   }
 
   async function uploadJob(j){
+    if(cancelled)throw new Error('cancelled');
     // Early duplicate skip: if this exact content is already indexed (or in
     // flight), don't upload it at all. Best-effort — any failure falls through
     // to a normal upload, where the server dedups anyway.
@@ -1176,21 +1186,24 @@ load();
         }
       }catch{}
     }
+    if(cancelled)throw new Error('cancelled');
     // Create or resume on the server (idempotent by fingerprint → true offset).
     const cr=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp})});
+      body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
     if(!cr.ok)throw new Error('create '+cr.status);
     const c=await cr.json();
     j.uploadId=c.upload_id;j.offset=c.offset;await jobPut(serial(j));
 
     let retry=0,recreated=0;
     while(j.offset<j.size){
+      if(cancelled)throw new Error('cancelled');
       const blob=j.file.slice(j.offset,j.offset+CHUNK);
       let r;
       try{
         r=await fetch('/uploads/'+j.uploadId,{method:'PATCH',
-          headers:{'Upload-Offset':String(j.offset),'Content-Type':'application/offset+octet-stream'},body:blob});
+          headers:{'Upload-Offset':String(j.offset),'Content-Type':'application/offset+octet-stream'},body:blob,signal:j.ctrl.signal});
       }catch(netErr){
+        if(cancelled||netErr.name==='AbortError')throw netErr;  // stop, don't retry
         if(++retry>MAX_RETRY)throw netErr;
         await sleep(Math.min(15000,500*2**retry));continue;   // backoff, chunk re-sliceable
       }
@@ -1221,6 +1234,7 @@ load();
     const busy=[...jobs.values()].some(j=>j.state==='wait'||j.state==='up');
     if(running||busy)return;
     const all=[...jobs.values()];
+    if(!all.length)return;   // nothing to summarize (e.g. after cancel cleared jobs)
     const sk=all.filter(j=>j.skipped).length;
     const dn=all.filter(j=>j.state==='done').length-sk;   // actually uploaded
     const er=all.filter(j=>j.state==='err').length;
@@ -1230,6 +1244,24 @@ load();
     jobs.clear();_ema=0;_emaT=0;_emaLoaded=0;
     load();                                  // refresh the file table
     setTimeout(()=>{if(jobs.size===0&&!running)upProgress.classList.remove('show');},er?5000:3000);
+    refreshResumeChips();
+  }
+
+  async function cancelAll(){
+    if(!jobs.size&&!running)return;
+    cancelled=true;
+    const snap=[...jobs.values()];
+    for(const j of snap){try{j.ctrl&&j.ctrl.abort();}catch{}}
+    jobs.clear();
+    upBar.classList.remove('done');upBar.classList.add('err');
+    upLabel.textContent=t('up.cancelled');upStats.textContent='';upPct.textContent='';
+    // Best-effort: drop the server-side partials and our local records.
+    await Promise.allSettled(snap.map(async j=>{
+      jobDel(j.fp).catch(()=>{});
+      if(j.uploadId){try{await _origFetch('/uploads/'+j.uploadId,{method:'DELETE'});}catch{}}
+    }));
+    cancelled=false;   // AbortError handling stops in-flight jobs regardless
+    setTimeout(()=>{if(!jobs.size&&!running){upProgress.classList.remove('show');upBar.classList.remove('err');}},2000);
     refreshResumeChips();
   }
 
@@ -1260,6 +1292,21 @@ load();
       catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
     }
     dzInput.click();
+  }
+  // Recurse a picked directory → enqueue every file (with its handle on Chromium
+  // so the upload can resume across a browser restart).
+  async function walkDir(dh){
+    for await (const entry of dh.values()){
+      if(entry.kind==='file'){try{await enqueue(await entry.getFile(),entry);}catch{}}
+      else if(entry.kind==='directory'){await walkDir(entry);}
+    }
+  }
+  async function pickFolder(){
+    if(hasDir){
+      try{const dh=await window.showDirectoryPicker();await walkDir(dh);return;}
+      catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
+    }
+    dzDir.click();   // webkitdirectory <input>: open explorer, pick one folder, all files included
   }
 
   // ── Resume after refresh / browser restart ──
@@ -1303,6 +1350,10 @@ load();
   dz.addEventListener('drop',async e=>{e.preventDefault();dragDepth=0;dz.classList.remove('drag');const files=await collectFiles(e.dataTransfer);for(const f of files)await enqueue(f,null);});
   dz.addEventListener('click',pick);
   dzInput.addEventListener('change',()=>{[...dzInput.files].forEach(f=>enqueue(f,null));dzInput.value='';});
+  dzDir.addEventListener('change',()=>{[...dzDir.files].forEach(f=>enqueue(f,null));dzDir.value='';});
+  $('pick-files').addEventListener('click',pick);
+  $('pick-folder').addEventListener('click',pickFolder);
+  $('up-cancel').addEventListener('click',cancelAll);
   window.addEventListener('beforeunload',e=>{if([...jobs.values()].some(j=>j.state==='up'||j.state==='wait')){e.preventDefault();e.returnValue='';}});
 
   refreshResumeChips();

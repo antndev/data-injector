@@ -201,6 +201,10 @@ async def run_worker(inbox_queue: asyncio.Queue):
     except Exception:
         logger.exception("Qdrant collection setup failed — continuing; files will "
                          "still be scanned and processed (upserts may fail until fixed)")
+    try:
+        await _check_embedding_model()
+    except Exception:
+        logger.exception("Embedding model probe failed — continuing")
 
     sem = asyncio.Semaphore(settings.worker_concurrency)
 
@@ -741,6 +745,27 @@ async def _qdrant_delete(qdrant: AsyncQdrantClient, file_id: str, filename: str)
             logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
 
     await asyncio.gather(_del_q(), _del_o())
+
+
+async def _check_embedding_model():
+    """Probe the embedding model once at startup so a missing model surfaces as
+    one clear, prominent message in the dashboard instead of every single file
+    failing with a cryptic 404."""
+    try:
+        await _ollama_global.embed(model=settings.embedding_model, input=["ping"])
+        logger.info("Embedding model '%s' is available", settings.embedding_model)
+    except Exception as e:
+        msg = str(e)
+        if "not found" in msg.lower() or "404" in msg:
+            logger.error(
+                "Embedding model '%s' is NOT installed in Ollama — run "
+                "`ollama pull %s` (or `docker exec -it ollama ollama pull %s`). "
+                "Every file will fail to embed until then.",
+                settings.embedding_model, settings.embedding_model, settings.embedding_model,
+            )
+        else:
+            logger.warning("Could not reach Ollama at %s to check model '%s': %s",
+                           settings.ollama_host, settings.embedding_model, msg[:200])
 
 
 async def _ensure_qdrant_collection():

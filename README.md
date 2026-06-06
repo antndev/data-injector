@@ -53,7 +53,7 @@ After 5 wrong attempts the login is locked for 5 minutes. Audit logs land in `<D
 
 ## Uploading files
 
-Drop files **or folders** onto the dashboard's upload zone, click it to pick files, or use "Select a folder…" to pick a whole directory (recursed automatically). Up to three files upload at once; each one starts processing the instant it finishes, without waiting for the rest. Files are sent in chunks (8 MiB), so memory stays flat even for multi-GB files.
+Drop files **or folders** onto the dashboard's upload zone, or use the "Choose files" / "Choose folder" buttons (a folder is recursed automatically). Up to three files upload at once; each one starts processing the instant it finishes, without waiting for the rest. Files are sent in chunks (8 MiB), so memory stays flat even for multi-GB files. An in-progress upload can be cancelled (the partials are dropped server-side).
 
 **Already-indexed files are skipped before upload.** The dashboard hashes each file (SHA-256) and asks the server whether that content is already in the index; unchanged files in a re-uploaded folder are skipped entirely instead of wasting bandwidth (the summary shows how many were "already indexed"). Files above 256 MiB skip this local hash and are deduplicated server-side after upload instead.
 
