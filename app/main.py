@@ -124,6 +124,17 @@ def _sweep_stale_uploads() -> None:
                 log.info("Swept stale upload partial: %s", sidecar.stem)
         except OSError:
             pass
+    # Also reap orphan .part files whose sidecar was never written (a crash
+    # between part.touch() and the sidecar write) — these have no *.json to
+    # match above and would otherwise never be swept.
+    for part in d.glob("*.part"):
+        if part.with_suffix(".json").exists():
+            continue
+        try:
+            if now - part.stat().st_mtime > ttl:
+                part.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/health"}
@@ -150,7 +161,17 @@ async def lifespan(app: FastAPI):
 
     inbox_queue: asyncio.Queue = asyncio.Queue()
     observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
+
+    # Surface a dead worker on /health (and thus the container healthcheck).
+    app.state.worker_alive = True
+
+    def _on_worker_done(t: asyncio.Task):
+        if not t.cancelled() and t.exception() is not None:
+            log.critical("Worker task died: %r", t.exception())
+        app.state.worker_alive = False
+
     worker_task = asyncio.create_task(run_worker(inbox_queue))
+    worker_task.add_done_callback(_on_worker_done)
 
     async def _supervise_observer():
         """Restart the watchdog Observer if its thread dies (seen with mounted
@@ -162,6 +183,12 @@ async def lifespan(app: FastAPI):
                 await asyncio.sleep(20)
                 if not observer.is_alive():
                     log.warning("Watcher Observer died — restarting it")
+                    old = observer
+                    try:
+                        old.stop()
+                        old.join(timeout=5)
+                    except Exception:
+                        log.exception("Failed to stop dead Observer (continuing)")
                     observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
                     inbox_queue.put_nowait(None)  # force an immediate rescan
             except asyncio.CancelledError:

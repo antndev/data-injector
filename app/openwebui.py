@@ -182,15 +182,24 @@ async def stop_writer() -> None:
                 fut.set_exception(RuntimeError("OWUI writer shut down"))
 
 
+def _ensure_running() -> None:
+    # After stop_writer() there is no task draining the queue, so a late caller
+    # (e.g. an in-flight DELETE that resumes during shutdown) must fail fast
+    # instead of awaiting a future that will never be resolved. Checked
+    # synchronously before enqueueing, so there is no producer/drain race.
+    if _queue is None or _writer_task is None:
+        raise RuntimeError("OWUI writer not running")
+
+
 async def register(file_id: str, filename: str, file_hash: str, size: int) -> None:
-    assert _queue is not None, "OWUI writer not started"
+    _ensure_running()
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     await _queue.put(("register", (file_id, filename, file_hash, size), fut))
     await fut
 
 
 async def unregister(file_id: str) -> None:
-    assert _queue is not None, "OWUI writer not started"
+    _ensure_running()
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     await _queue.put(("unregister", (file_id,), fut))
     await fut

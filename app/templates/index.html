@@ -1007,7 +1007,7 @@ load();
 // System Access API exists (Chromium) we persist the file handle for one-click
 // resume; elsewhere we fall back to re-selecting the same file.
 (()=>{
-  const CHUNK=8*1024*1024;           // matches server upload_chunk_bytes intent
+  const CHUNK={{ upload_chunk_bytes }};   // server-configured UPLOAD_CHUNK_BYTES
   const CONCURRENCY=3;               // parallel files
   const MAX_RETRY=6;
   const hasFS='showOpenFilePicker' in window;
@@ -1064,7 +1064,7 @@ load();
     const c=await cr.json();
     j.uploadId=c.upload_id;j.offset=c.offset;await jobPut(serial(j));
 
-    let retry=0;
+    let retry=0,recreated=0;
     while(j.offset<j.size){
       const blob=j.file.slice(j.offset,j.offset+CHUNK);
       let r;
@@ -1078,11 +1078,15 @@ load();
       retry=0;
       if(r.status===204||r.status===409){
         const off=parseInt(r.headers.get('Upload-Offset'));
-        if(!isNaN(off))j.offset=off;
+        if(isNaN(off))throw new Error('bad Upload-Offset header');  // never advance blindly → no spin
+        j.offset=off;
         await jobPut(serial(j));updateUI();
         if(r.headers.get('Upload-Complete')==='1')break;
       }else if(r.status===404){
-        // Server dropped the partial (TTL/cancel). Recreate from scratch once.
+        // Server dropped the partial (TTL/cancel). Recreate — but cap it so a
+        // structural 404 can't busy-loop resending the whole file forever.
+        if(++recreated>2)throw new Error('upload keeps disappearing server-side');
+        await sleep(1000);
         const c2=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp})});
         if(!c2.ok)throw new Error('recreate '+c2.status);

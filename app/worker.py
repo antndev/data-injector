@@ -463,6 +463,14 @@ async def _process_file(path: Path, file_id: str):
                     pass
         else:
             logger.exception("Failed: %s — %s", original_path.name, exc)
+            # The upsert and register() run in parallel, so a failure in one can
+            # leave the other already committed — partial Qdrant vectors and/or a
+            # KB row that would make a 'failed' file searchable. Clean both so a
+            # failed file leaves nothing orphaned.
+            try:
+                await _qdrant_delete(_qdrant_global, file_id, original_path.name)
+            except Exception as ce:
+                logger.warning("Post-failure cleanup for %s: %s", file_id, ce)
             failed = None
             if proc_path is not None and proc_path.exists():
                 failed = _move(proc_path, settings.failed_dir)

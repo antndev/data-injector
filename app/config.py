@@ -75,7 +75,8 @@ class Settings(BaseSettings):
     openwebui_user_id: str
     # Path to OpenWebUI's shared sqlite DB inside this container. Configurable
     # so the app isn't silently broken if the volume is mounted elsewhere or
-    # OpenWebUI changes its layout. The startup check fails loud if it's wrong.
+    # OpenWebUI changes its layout. A startup check logs a loud error if it's
+    # wrong (the app keeps running; affected files surface as 'failed').
     openwebui_db_path: Path = Path("/openwebui-data/webui.db")
 
     # ── Storage model ─────────────────────────────────────────────────────────

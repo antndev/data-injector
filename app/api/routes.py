@@ -14,7 +14,7 @@ from typing import Literal
 
 import aiosqlite
 from fastapi import APIRouter, HTTPException, Request, Form, Header, Response
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -105,7 +105,10 @@ def _reset(ip: str) -> None:
 
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+    return templates.TemplateResponse(
+        request=request, name="index.html",
+        context={"upload_chunk_bytes": settings.upload_chunk_bytes},
+    )
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -172,7 +175,12 @@ async def event_stream():
 
 
 @router.get("/health")
-async def health():
+async def health(request: Request):
+    # Report unhealthy if the background worker has died (e.g. a fatal Qdrant
+    # dimension mismatch at startup) — otherwise the container looks healthy
+    # while nothing is being ingested. The compose healthcheck restarts on 503.
+    if not getattr(request.app.state, "worker_alive", True):
+        return JSONResponse({"ok": False, "worker": "dead"}, status_code=503)
     return {"ok": True}
 
 
@@ -430,7 +438,9 @@ def _safe_filename(raw: str | None) -> str:
     name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
     name = "".join(c for c in name if c >= " " and c != "\x7f")  # strip control/DEL
     name = name.strip(" .")  # leading/trailing dots & spaces break Windows shares
-    if not name or name in (".", "..") or len(name) > _MAX_NAME_BYTES:
+    # Measure the UTF-8 byte length, not the character count — a name of fewer
+    # than 200 chars can still exceed the 255-byte filesystem limit.
+    if not name or name in (".", "..") or len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
         if len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
             ext = Path(name).suffix[:20]
             stem = Path(name).stem
@@ -538,13 +548,18 @@ async def head_upload(upload_id: str):
 async def patch_upload(
     upload_id: str,
     request: Request,
-    upload_offset: int = Header(...),
+    upload_offset: str | None = Header(default=None),
 ):
     """Append the request body at `Upload-Offset`. Returns 204 + the new
     Upload-Offset; on a stale offset returns 409 + the true offset; on the
     final chunk atomically moves the file into the inbox and adds
     Upload-Complete: 1."""
     _check_upload_id(upload_id)
+    # Parse the header by hand so a missing/garbage value is a clean 400, not a
+    # 422 (consistent with the other upload endpoints).
+    if upload_offset is None or not upload_offset.lstrip("-").isdigit():
+        raise HTTPException(400, "Missing or invalid Upload-Offset header")
+    upload_offset = int(upload_offset)
     part, sidecar = _staging_paths(upload_id)
     meta = _read_sidecar(sidecar) if sidecar.exists() else None
     if meta is None or not part.exists():
