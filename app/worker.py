@@ -473,8 +473,17 @@ async def _process_file(path: Path, file_id: str):
                 logger.warning("Post-failure cleanup for %s: %s", file_id, ce)
             failed = None
             if proc_path is not None and proc_path.exists():
-                failed = _move(proc_path, settings.failed_dir)
-                (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
+                if settings.delete_after_ingest:
+                    # Retain ONLY metadata: the error goes in the DB row, the
+                    # file itself is removed (nothing customer-supplied stays on
+                    # disk). Re-uploading the file is how you retry it.
+                    try:
+                        proc_path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                else:
+                    failed = _move(proc_path, settings.failed_dir)
+                    (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
             async with connect() as db:
                 if failed is not None:
                     # Keep the DB filename in sync with the (possibly renamed)
@@ -482,12 +491,12 @@ async def _process_file(path: Path, file_id: str):
                     # resolve correctly.
                     await db.execute(
                         "UPDATE files SET status='failed', filename=?, error_message=? WHERE id=?",
-                        (failed.name, str(exc)[:2000], file_id),
+                        (failed.name, str(exc)[:4000], file_id),
                     )
                 else:
                     await db.execute(
                         "UPDATE files SET status='failed', error_message=? WHERE id=?",
-                        (str(exc)[:2000], file_id),
+                        (str(exc)[:4000], file_id),
                     )
                 await db.commit()
     finally:

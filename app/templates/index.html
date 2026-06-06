@@ -472,6 +472,9 @@ const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
 const dt=s=>{if(!s)return'—';const d=new Date(s),now=new Date();const sd=d.toDateString()===now.toDateString();return sd?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})};
 
+// When delete-after-ingest is on, a failed file's bytes are gone, so it can't
+// be retried from disk — you re-upload instead. Hide the retry affordances.
+const DELETE_AFTER_INGEST={{ delete_after_ingest|tojson }};
 let F='',S='',selected=new Set(),files=[];
 let pageOffset=0,hasMore=true,loadingMore=false;
 const PAGE=200;
@@ -526,7 +529,7 @@ function renderBulk(){
   $('all-cb').checked=allVis&&n>0;
   $('all-cb').indeterminate=n>0&&!allVis;
   const selFiles=files.filter(f=>selected.has(f.id));
-  const allRetryable=selFiles.length>0&&selFiles.every(f=>f.status==='failed');
+  const allRetryable=!DELETE_AFTER_INGEST&&selFiles.length>0&&selFiles.every(f=>f.status==='failed');
   $('b-retry').style.display=allRetryable?'':'none';
 }
 
@@ -534,7 +537,7 @@ function renderBulk(){
 function rowActions(f){
   const a=[];
   if(f.status==='failed') a.push(`<button class="btn s" onclick="showErr('${f.id}')" title="Why did this fail?">Why?</button>`);
-  if(f.status==='failed') a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);
+  if(f.status==='failed'&&!DELETE_AFTER_INGEST) a.push(`<button class="btn s r" onclick="rt('${f.id}')">Retry</button>`);
   if(f.status!=='deleted') a.push(`<button class="btn s d" onclick="del('${f.id}')">Delete</button>`);
   return a.join('');
 }

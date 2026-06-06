@@ -107,7 +107,10 @@ def _reset(ip: str) -> None:
 async def dashboard(request: Request):
     return templates.TemplateResponse(
         request=request, name="index.html",
-        context={"upload_chunk_bytes": settings.upload_chunk_bytes},
+        context={
+            "upload_chunk_bytes": settings.upload_chunk_bytes,
+            "delete_after_ingest": settings.delete_after_ingest,
+        },
     )
 
 
