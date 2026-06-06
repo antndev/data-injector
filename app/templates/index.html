@@ -1418,11 +1418,16 @@ load();
     const live=[];
     for(const s of saved){
       if(jobs.has(s.fp))continue;
-      if(!s.uploadId){await jobDel(s.fp);continue;}   // POST never completed → no server partial, nothing to resume
+      if(!s.uploadId){
+        // Still queued (not yet sent) at refresh time. A folder member is kept
+        // and resumed from 0 via the folder re-walk; a loose file is an orphan.
+        if(s.gid){s._off=0;live.push(s);}else await jobDel(s.fp);
+        continue;
+      }
       let off=0,exists=true,reachable=true;
       try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;else reachable=false;}catch{reachable=false;}
-      if(!reachable)continue;                       // transient error — don't show a bogus 0% chip; retry next refresh
-      if(!exists||off>=s.size){await jobDel(s.fp);continue;}
+      if(!reachable)continue;                       // transient error → retry next refresh
+      if(!exists||off>=s.size){await jobDel(s.fp);continue;}  // finalized / done / swept → not resumable
       s._off=off;live.push(s);
     }
     // group folder jobs by gid; everything else is an individual file
