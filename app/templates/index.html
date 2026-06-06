@@ -569,7 +569,7 @@ function applyI18n(){
     const raw=line.dataset.msg; if(raw==null) return;
     const me=line.querySelector('.msg'); if(me) me.textContent=localizeLog(raw);
   });
-  const lb=$('lang-btn');if(lb)lb.textContent=LANG==='de'?'EN':'DE';
+  const lb=$('lang-btn');if(lb)lb.textContent=LANG==='de'?'DE':'EN';  // show the CURRENT language
 }
 function toggleLang(){LANG=LANG==='de'?'en':'de';localStorage.setItem('lang',LANG);applyI18n();load();}
 
