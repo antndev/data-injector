@@ -1370,12 +1370,11 @@ load();
     }
     dzInput.click();
   }
-  // Recurse a picked directory → enqueue every file (with its handle + group id
-  // on Chromium so the WHOLE folder resumes with one permission grant).
-  async function walkDir(dh,gid){
+  // Recurse a picked directory → collect [{file,handle}] (folders skipped).
+  async function walkDir(dh,out){
     for await (const entry of dh.values()){
-      if(entry.kind==='file'){try{await enqueue(await entry.getFile(),entry,false,gid);}catch{}}
-      else if(entry.kind==='directory'){await walkDir(entry,gid);}
+      if(entry.kind==='file'){try{out.push({file:await entry.getFile(),handle:entry});}catch{}}
+      else if(entry.kind==='directory'){await walkDir(entry,out);}
     }
   }
   const newGid=()=>(crypto.randomUUID?crypto.randomUUID():'g'+Date.now()+Math.random().toString(16).slice(2));
@@ -1384,8 +1383,13 @@ load();
       try{
         const dh=await window.showDirectoryPicker();
         const gid=newGid();
-        try{await dirsPut({gid,name:dh.name||'Ordner',handle:dh});}catch{}  // store the folder handle for one-grant resume
-        await walkDir(dh,gid);
+        const items=[];await walkDir(dh,items);
+        // Store the folder handle + its ORIGINAL total bytes so the resume chip
+        // shows whole-folder progress (finished files count as 100%) instead of
+        // just the remaining files' progress.
+        const total=items.reduce((a,x)=>a+x.file.size,0);
+        try{await dirsPut({gid,name:dh.name||'Ordner',handle:dh,total,count:items.length});}catch{}
+        for(const x of items)await enqueue(x.file,x.handle,false,gid);
         return;
       }catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
     }
@@ -1443,8 +1447,12 @@ load();
     // ONE chip per folder → resumes the whole folder with a single permission grant
     for(const [gid,group] of groups){
       const d=dirMap.get(gid);
-      const total=group.reduce((a,s)=>a+s.size,0),done=group.reduce((a,s)=>a+s._off,0);
-      const pct=total>0?Math.round(done/total*100):0;
+      // Whole-folder %: already-finished files (gone from `group`) count as done.
+      const remain=group.reduce((a,s)=>a+s.size,0);          // bytes of files still pending
+      const remainDone=group.reduce((a,s)=>a+s._off,0);      // partial bytes of those
+      const total=(d&&d.total)||remain;                       // original folder size (fallback: remaining)
+      const done=Math.max(0,total-remain)+remainDone;         // finished files + partials of remaining
+      const pct=total>0?Math.min(100,Math.round(done/total*100)):0;
       const nm=(d&&d.name)||'Ordner';
       const chip=mkChip(`📁 ${nm} (${group.length})`,pct,nm);
       chip.onclick=()=>resumeFolder(gid,d,group,chip);
@@ -1515,7 +1523,8 @@ load();
     if(!files.length)return;
     const root=(files[0].webkitRelativePath||'').split('/')[0]||'Ordner';
     const gid=newGid();
-    try{await dirsPut({gid,name:root,handle:null});}catch{}
+    const total=files.reduce((a,f)=>a+f.size,0);
+    try{await dirsPut({gid,name:root,handle:null,total,count:files.length});}catch{}
     for(const f of files)await enqueue(f,null,false,gid);
   });
   $('up-cancel').addEventListener('click',cancelAll);
