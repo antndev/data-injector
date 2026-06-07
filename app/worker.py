@@ -24,8 +24,6 @@ from app.watcher import SUPPORTED
 
 logger = logging.getLogger(__name__)
 
-UNSUPPORTED_EXTS = {".strings", ".nib", ".icns", ".plist"}
-
 # Strip control characters that some embed models (notably bge-m3 via Ollama)
 # choke on and return NaN for. PPTX slide-marker chunks like "--- Slide 5 ---"
 # combined with stray control chars are the usual culprits.
@@ -65,9 +63,10 @@ _ollama_global: OllamaClient | None = None
 
 # ---------------------------------------------------------------------------
 # GLOBAL concurrency caps. Critically these must be shared across ALL files —
-# prior versions created one Semaphore per file, which meant 64 concurrent
-# files × 8 embed slots = 512 simultaneous Ollama requests, drowning the
-# embedding server. With these at module level the cap is honoured globally.
+# prior versions created one Semaphore per file, which meant worker_concurrency
+# files × embed_concurrency slots each (e.g. 64 × 16) = far more simultaneous
+# Ollama requests than intended, drowning the embedding server. With these at
+# module level the cap is honoured globally.
 # ---------------------------------------------------------------------------
 _embed_sem: asyncio.Semaphore | None = None
 _upsert_sem: asyncio.Semaphore | None = None
@@ -322,7 +321,7 @@ async def _process_file(path: Path, file_id: str):
         loop = asyncio.get_running_loop()
 
         # 1. Unsupported extension
-        if ext in UNSUPPORTED_EXTS or ext not in SUPPORTED:
+        if ext not in SUPPORTED:
             _dispose(path, settings.unsupported_dir)
             await _set_status(file_id, "unsupported")
             logger.info("Unsupported: %s", path.name)
@@ -491,12 +490,16 @@ async def _process_file(path: Path, file_id: str):
                 await _qdrant_delete(_qdrant_global, file_id, original_path.name)
             except Exception as ce:
                 logger.warning("Post-failure cleanup for %s: %s", file_id, ce)
+            # Only DELETE the source on a PERMANENT content failure — one we
+            # raised as ValueError (no text / no chunks / nothing embeddable):
+            # that file can never ingest, so keeping only its DB metadata is
+            # correct. A TRANSIENT infra error (Qdrant/Ollama/OpenWebUI/network,
+            # not a ValueError) must KEEP the file in failed/ so it's retryable —
+            # otherwise a brief DB lock would destroy an ingestable document.
+            permanent = isinstance(exc, ValueError)
             failed = None
             if proc_path is not None and proc_path.exists():
-                if settings.delete_after_ingest:
-                    # Retain ONLY metadata: the error goes in the DB row, the
-                    # file itself is removed (nothing customer-supplied stays on
-                    # disk). Re-uploading the file is how you retry it.
+                if settings.delete_after_ingest and permanent:
                     try:
                         proc_path.unlink(missing_ok=True)
                     except OSError:
@@ -640,6 +643,13 @@ async def _embed_and_upload(
         async with _embed_sem:
             try:
                 resp = await ollama.embed(model=settings.embedding_model, input=batch)
+                # If the server returned fewer vectors than inputs (some proxies
+                # do this without erroring), zip would silently drop the trailing
+                # chunks. Fall back to per-chunk so nothing is lost unnoticed.
+                if len(resp.embeddings) != len(batch):
+                    raise ValueError(
+                        f"embedding count mismatch: {len(resp.embeddings)} for {len(batch)} chunks"
+                    )
                 pairs = []
                 for c, v in zip(batch, resp.embeddings):
                     if _is_finite_vec(v):
@@ -652,7 +662,8 @@ async def _embed_and_upload(
                 return pairs
             except Exception as e:
                 emsg = str(e)
-                if not ("NaN" in emsg or "500" in emsg or "unsupported" in emsg.lower()):
+                if not ("NaN" in emsg or "500" in emsg or "unsupported" in emsg.lower()
+                        or "mismatch" in emsg):
                     raise
                 logger.warning(
                     "Embed batch failed for %s (%s) — falling back to per-chunk",
@@ -845,7 +856,10 @@ def _dispose(path: Path, fallback_dir: Path) -> None:
 
 
 def _move(src: Path, dest_dir: Path) -> Path:
-    """Move src into dest_dir, renaming on collision. Returns final path."""
+    """Move src into dest_dir, renaming on collision. Returns final path.
+    Creates dest_dir on demand so category dirs (done/failed/duplicates/…) are
+    made lazily — under delete_after_ingest they otherwise never exist."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / src.name
     counter = 1
     while dest.exists():

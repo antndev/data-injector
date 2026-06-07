@@ -105,11 +105,15 @@ class Settings(BaseSettings):
         env_file = ".env"
 
     def create_dirs(self):
-        for d in [
-            self.inbox_dir, self.processing_dir, self.done_dir,
-            self.failed_dir, self.duplicates_dir, self.unsupported_dir,
-            self.uploads_tmp_dir, self.log_dir,
-        ]:
+        # Always-needed dirs. The category dirs (done/failed/duplicates/
+        # unsupported) are created on demand by worker._move when a file is
+        # actually moved there — under delete_after_ingest they'd otherwise sit
+        # permanently empty.
+        dirs = [self.inbox_dir, self.processing_dir, self.uploads_tmp_dir, self.log_dir]
+        if not self.delete_after_ingest:
+            dirs += [self.done_dir, self.failed_dir,
+                     self.duplicates_dir, self.unsupported_dir]
+        for d in dirs:
             d.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 

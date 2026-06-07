@@ -244,13 +244,12 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .badge.failed::before{background:var(--red)}
 .badge.duplicate::before{background:var(--purple)}
 .badge.unsupported::before{background:var(--dim)}
-.badge.deleted::before{background:#444}
 .badge.queued{color:var(--blue)}
 .badge.processing{color:var(--yellow)}
 .badge.done{color:var(--green)}
 .badge.failed{color:var(--red)}
 .badge.duplicate{color:var(--purple)}
-.badge.unsupported,.badge.deleted{color:var(--dim)}
+.badge.unsupported{color:var(--dim)}
 
 .actions{display:flex;gap:6px;justify-content:flex-end}
 
@@ -535,11 +534,11 @@ const I18N={
   'nav.all':'Alle','nav.queued':'Warteschlange','nav.processing':'In Arbeit','nav.done':'Fertig','nav.failed':'Fehlgeschlagen','nav.duplicate':'Duplikate','nav.unsupported':'Nicht unterstützt',
   'cleanup':'Aufräumen','cleanup.failed':'Alle fehlgeschlagenen löschen','cleanup.dup':'Alle Duplikate löschen','cleanup.uns':'Alle nicht unterstützten löschen',
   'dz.text':'Dateien/Ordner ziehen oder klicken','dz.files':'Dateien','dz.folder':'Ordner','activity':'Aktivität','clear':'Leeren',
-  'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden','lang.switch':'Sprache wechseln',
+  'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden',
   'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
   'th.filename':'Dateiname','th.status':'Status','th.chunks':'Chunks','th.size':'Größe','th.date':'Datum',
   'empty':'Keine Dateien','cancel':'Abbrechen','delete':'Löschen','close':'Schließen','retry':'Erneut','why':'Warum?',
-  'status.queued':'Warteschlange','status.processing':'In Arbeit','status.done':'Fertig','status.failed':'Fehlgeschlagen','status.duplicate':'Duplikat','status.unsupported':'Nicht unterstützt','status.deleted':'Gelöscht',
+  'status.queued':'Warteschlange','status.processing':'In Arbeit','status.done':'Fertig','status.failed':'Fehlgeschlagen','status.duplicate':'Duplikat','status.unsupported':'Nicht unterstützt',
   'err.none':'(keine Fehlermeldung gespeichert)','err.load':'Fehler konnte nicht geladen werden',
   'toast.deleting':'Wird gelöscht…','toast.deleted':'Gelöscht','toast.delfail':'Löschen fehlgeschlagen','toast.filedel':'Datei gelöscht',
   'up.uploading':'Lädt hoch…','up.cancelled':'Abgebrochen','indexed':'bereits indexiert','resume':'fortsetzen',
@@ -558,11 +557,11 @@ const I18N={
   'nav.all':'All','nav.queued':'Queued','nav.processing':'Processing','nav.done':'Done','nav.failed':'Failed','nav.duplicate':'Duplicates','nav.unsupported':'Unsupported',
   'cleanup':'Cleanup','cleanup.failed':'Delete all failed','cleanup.dup':'Delete all duplicates','cleanup.uns':'Delete all unsupported',
   'dz.text':'Drag or click to add files/folders','dz.files':'Files','dz.folder':'Folder','activity':'Activity','clear':'Clear',
-  'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out','lang.switch':'Switch language',
+  'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out',
   'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
   'th.filename':'Filename','th.status':'Status','th.chunks':'Chunks','th.size':'Size','th.date':'Date',
   'empty':'No files','cancel':'Cancel','delete':'Delete','close':'Close','retry':'Retry','why':'Why?',
-  'status.queued':'Queued','status.processing':'Processing','status.done':'Done','status.failed':'Failed','status.duplicate':'Duplicate','status.unsupported':'Unsupported','status.deleted':'Deleted',
+  'status.queued':'Queued','status.processing':'Processing','status.done':'Done','status.failed':'Failed','status.duplicate':'Duplicate','status.unsupported':'Unsupported',
   'err.none':'(no error message saved)','err.load':'Could not load error',
   'toast.deleting':'Deleting…','toast.deleted':'Deleted','toast.delfail':'Delete failed','toast.filedel':'File deleted',
   'up.uploading':'Uploading…','up.cancelled':'Cancelled','indexed':'already indexed','resume':'resume',
@@ -614,14 +613,18 @@ const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/104857
 const dtLoc=()=>LANG==='de'?'de-DE':'en-US';   // dates follow the chosen UI language
 // today → time · this year → day+month · older → day+month+year. Full
 // timestamp on hover via dtFull(). Follows the chosen UI language (dtLoc).
+// SQLite's created_at ('2026-06-07 12:34:56', no zone) is UTC but JS parses
+// such naive strings as LOCAL time. Normalise zone-less strings to UTC so they
+// line up with ingested_at (which is ISO+offset).
+const toDate=s=>{if(typeof s==='string'&&!/[zZ]|[+-]\d\d:?\d\d$/.test(s))s=s.replace(' ','T')+'Z';return new Date(s);};
 const dt=s=>{
   if(!s)return'—';
-  const d=new Date(s),now=new Date(),L=dtLoc();
+  const d=toDate(s),now=new Date(),L=dtLoc();
   if(d.toDateString()===now.toDateString())   return d.toLocaleTimeString(L,{hour:'2-digit',minute:'2-digit'});
   if(d.getFullYear()===now.getFullYear())     return d.toLocaleDateString(L,{day:'numeric',month:'short'});
   return d.toLocaleDateString(L,{day:'numeric',month:'short',year:'numeric'});
 };
-const dtFull=s=>{if(!s)return'';try{return new Date(s).toLocaleString(dtLoc());}catch{return''}};
+const dtFull=s=>{if(!s)return'';try{return toDate(s).toLocaleString(dtLoc());}catch{return''}};
 
 // When delete-after-ingest is on, a failed file's bytes are gone, so it can't
 // be retried from disk — you re-upload instead. Hide the retry affordances.
@@ -689,7 +692,7 @@ function rowActions(f){
   const a=[];
   if(f.status==='failed') a.push(`<button class="btn s" onclick="showErr('${f.id}')" title="${esc(t('why'))}">${esc(t('why'))}</button>`);
   if(f.status==='failed'&&!DELETE_AFTER_INGEST) a.push(`<button class="btn s r" onclick="rt('${f.id}')">${esc(t('retry'))}</button>`);
-  if(f.status!=='deleted') a.push(`<button class="btn s d" onclick="del('${f.id}')">${esc(t('delete'))}</button>`);
+  a.push(`<button class="btn s d" onclick="del('${f.id}')">${esc(t('delete'))}</button>`);
   return a.join('');
 }
 async function showErr(id){
@@ -1011,7 +1014,7 @@ $('q').oninput=e=>{clearTimeout(_searchT);_searchT=setTimeout(()=>{S=e.target.va
 
 // ── Live rates (exponential decay, no sliding window) ────────────────────
 // Each event contributes exp(-Δt / τ) to the rate. Two τ values are tracked:
-//   TAU      = 3s   → snappy display rate, drops near zero in 6–8s
+//   TAU      = 5s   → snappy display rate, drops near zero in ~8s
 //   TAU_ETA  = 15s  → smoother rate for ETA, less jitter when files vary
 const TAU=5;
 const TAU_ETA=15;
@@ -1222,7 +1225,7 @@ load();
     if(!n)return;
     const pct=total>0?Math.min(100,Math.round(sent/total*100)):0;
     upBar.style.width=pct+'%';upPct.textContent=pct+'%';
-    upLabel.textContent=n>1?tf('up.uploadingN',{done,n}):(upName||[...jobs.values()][0].name);
+    upLabel.textContent=n>1?tf('up.uploadingN',{done,n}):(upName||([...jobs.values()].find(j=>!j.skipped)||{}).name||'');
     const now=performance.now();
     if(now-_emaT>=200){const inst=(sent-_emaLoaded)/Math.max(0.001,(now-_emaT)/1000);_ema=_ema?_ema*0.7+inst*0.3:inst;_emaT=now;_emaLoaded=sent;const left=_ema>0?(total-sent)/_ema:Infinity;upStats.textContent=sent<total?tf('up.speed',{r:fmtBytes(Math.max(0,_ema)),eta:fmtEta(left)}):'';}
   }
@@ -1261,6 +1264,7 @@ load();
       body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
     if(!cr.ok)throw new Error('create '+cr.status);
     const c=await cr.json();
+    if(stopped(j))throw new Error('cancelled');   // cancel may have jobDel'd us during the create round-trip
     j.uploadId=c.upload_id;j.offset=c.offset;await jobPut(serial(j));
 
     let retry=0,recreated=0;
@@ -1292,7 +1296,9 @@ load();
         const c2=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
         if(!c2.ok)throw new Error('recreate '+c2.status);
-        const cc=await c2.json();j.uploadId=cc.upload_id;j.offset=cc.offset;await jobPut(serial(j));
+        const cc=await c2.json();
+        if(stopped(j))throw new Error('cancelled');
+        j.uploadId=cc.upload_id;j.offset=cc.offset;await jobPut(serial(j));
       }else{
         throw new Error('patch '+r.status);
       }
@@ -1322,7 +1328,7 @@ load();
     cancelled=true;
     const snap=[...jobs.values()];
     for(const j of snap){try{j.ctrl&&j.ctrl.abort();}catch{}}
-    jobs.clear();
+    jobs.clear();_ema=0;_emaT=0;_emaLoaded=0;   // reset speed EMA so the next batch starts clean
     upBar.classList.remove('done');upBar.classList.add('err');
     upLabel.textContent=t('up.cancelled');upStats.textContent='';upPct.textContent='';
     // Best-effort: drop the server-side partials and our local records.
@@ -1451,8 +1457,11 @@ load();
       chip.onclick=()=>resumeSaved(s,chip);
       resumeBar.appendChild(chip);
     }
-    // GC folder records whose jobs are all gone
-    for(const d of dirs){if(!groups.has(d.gid))await dirsDel(d.gid);}
+    // GC a folder record only when NO saved job references its gid — not merely
+    // when this probe pass found no live members (a transient HEAD failure must
+    // not discard the stored directory handle).
+    const keepGids=new Set(saved.filter(s=>s.gid).map(s=>s.gid));
+    for(const d of dirs){if(!keepGids.has(d.gid))await dirsDel(d.gid);}
   }
   // Re-pick a whole folder via a one-shot webkitdirectory <input> (works in
   // every browser, incl. Firefox/Safari) → returns its files.

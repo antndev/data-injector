@@ -465,6 +465,12 @@ def _staging_paths(upload_id: str) -> tuple[Path, Path]:
 
 
 def _lock_for(upload_id: str) -> asyncio.Lock:
+    # Opportunistic GC: when the table grows, drop idle locks whose .part is gone
+    # (finalized / cancelled / TTL-swept) so abandoned uploads don't leak locks.
+    if len(_upload_locks) > 256:
+        for uid in [u for u in _upload_locks
+                    if not _upload_locks[u].locked() and not _staging_paths(u)[0].exists()]:
+            _upload_locks.pop(uid, None)
     lock = _upload_locks.get(upload_id)
     if lock is None:
         lock = asyncio.Lock()
@@ -613,11 +619,10 @@ async def patch_upload(
                 if not chunk:
                     continue
                 room = size - (real + written)
-                if room <= 0:
-                    overshoot = True
-                    break
-                if len(chunk) > room:
-                    fh.write(chunk[:room]); written += room
+                if room <= 0 or len(chunk) > room:
+                    # Client sent more than it declared — reject WITHOUT writing
+                    # the overflow, so the .part stays at its true incomplete
+                    # size instead of becoming a full-size, never-finalized orphan.
                     overshoot = True
                     break
                 fh.write(chunk); written += len(chunk)
