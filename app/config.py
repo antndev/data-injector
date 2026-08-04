@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     data_dir: Path = Path("/data")
     db_path: Path = Path("/db/ingestor.db")
 
+    # Baked into the image by CI (see Dockerfile ARG APP_VERSION). Reported on
+    # /health so the running build is always identifiable.
+    app_version: str = "dev"
+
     # ── Derived paths (not env vars) ─────────────────────────────────────────
     @property
     def inbox_dir(self) -> Path:

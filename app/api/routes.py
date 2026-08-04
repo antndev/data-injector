@@ -183,8 +183,11 @@ async def health(request: Request):
     # dimension mismatch at startup) — otherwise the container looks healthy
     # while nothing is being ingested. The compose healthcheck restarts on 503.
     if not getattr(request.app.state, "worker_alive", True):
-        return JSONResponse({"ok": False, "worker": "dead"}, status_code=503)
-    return {"ok": True}
+        return JSONResponse(
+            {"ok": False, "worker": "dead", "version": settings.app_version},
+            status_code=503,
+        )
+    return {"ok": True, "version": settings.app_version}
 
 
 @router.post("/events/clear")
