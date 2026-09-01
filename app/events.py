@@ -60,7 +60,7 @@ async def subscribe(idle_timeout: float | None = None) -> AsyncIterator[dict | N
             try:
                 yield await asyncio.wait_for(q.get(), timeout=idle_timeout)
             except asyncio.TimeoutError:
-                yield None  # caller should send a keepalive
+                yield None
     finally:
         _subscribers.discard(q)
 
@@ -76,7 +76,4 @@ class _Handler(logging.Handler):
 def install_log_handler():
     h = _Handler()
     h.setLevel(logging.INFO)
-    # Attach only to the root "app" logger — children (app.worker,
-    # app.watcher, app.api.routes) propagate up automatically. Adding to
-    # each child as well caused every log line to be emitted twice.
     logging.getLogger("app").addHandler(h)

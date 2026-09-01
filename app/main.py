@@ -77,30 +77,16 @@ audit = _setup_audit_log()
 log = logging.getLogger("app")
 
 
-def _check_owui_db() -> None:
-    """Loudly flag a misconfigured OpenWebUI DB at startup. If the path is
-    wrong/unmounted or the expected tables are missing, every register would
-    otherwise fail quietly — now those failures surface (and per-op futures
-    propagate the error so affected files are marked 'failed', not 'done')."""
-    import sqlite3
-    path = settings.openwebui_db_path
-    if not path.exists():
-        log.error("OpenWebUI DB not found at %s — files will NOT appear in the "
-                  "Knowledge Base until OPENWEBUI_DB_PATH / the volume mount is fixed.", path)
-        return
-    try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        try:
-            have = {r[0] for r in con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'")}
-        finally:
-            con.close()
-        missing = {"file", "knowledge_file"} - have
-        if missing:
-            log.error("OpenWebUI DB at %s is missing table(s) %s — registrations "
-                      "will fail. Is this the right webui.db?", path, sorted(missing))
-    except Exception as e:
-        log.error("Could not inspect OpenWebUI DB at %s: %s", path, e)
+async def _check_openwebui() -> None:
+    """Fails loudly at startup if OpenWebUI is unreachable or the API key is
+    rejected, instead of letting every file fail quietly later."""
+    from app import openwebui
+
+    if not await openwebui.reachable():
+        log.error(
+            "OpenWebUI unreachable at %s or API key rejected, uploads will fail",
+            settings.openwebui_url,
+        )
 
 
 def _sweep_stale_uploads() -> None:
@@ -124,9 +110,6 @@ def _sweep_stale_uploads() -> None:
                 log.info("Swept stale upload partial: %s", sidecar.stem)
         except OSError:
             pass
-    # Also reap orphan .part files whose sidecar was never written (a crash
-    # between part.touch() and the sidecar write) — these have no *.json to
-    # match above and would otherwise never be swept.
     for part in d.glob("*.part"):
         if part.with_suffix(".json").exists():
             continue
@@ -144,14 +127,11 @@ PUBLIC_PATHS = {"/login", "/logout", "/health"}
 async def lifespan(app: FastAPI):
     settings.create_dirs()
     _check_log_size()
-    _check_owui_db()
+    await _check_openwebui()
     _sweep_stale_uploads()
     await init_db()
 
     loop = asyncio.get_running_loop()
-    # Default ThreadPoolExecutor maxes out at ~32 workers — too small when
-    # WORKER_CONCURRENCY is high. Bump it so concurrent text extraction,
-    # hashing, and legacy conversions don't queue behind each other.
     loop.set_default_executor(ThreadPoolExecutor(
         max_workers=settings.worker_concurrency * 2,
         thread_name_prefix="ingest",
@@ -162,7 +142,6 @@ async def lifespan(app: FastAPI):
     inbox_queue: asyncio.Queue = asyncio.Queue()
     observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
 
-    # Surface a dead worker on /health (and thus the container healthcheck).
     app.state.worker_alive = True
 
     def _on_worker_done(t: asyncio.Task):
@@ -190,7 +169,7 @@ async def lifespan(app: FastAPI):
                     except Exception:
                         log.exception("Failed to stop dead Observer (continuing)")
                     observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
-                    inbox_queue.put_nowait(None)  # force an immediate rescan
+                    inbox_queue.put_nowait(None)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -200,11 +179,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown order matters:
-    # 1. Stop the Observer supervisor and the watcher (no new inbox events).
-    # 2. Cancel the worker scan loop so it doesn't enqueue more files.
-    # 3. Cancel + await every in-flight per-file processing task.
-    # 4. Close the persistent Qdrant client + drain the OWUI writer.
     supervisor_task.cancel()
     try:
         await supervisor_task
@@ -249,8 +223,8 @@ app.add_middleware(
     secret_key=_session_secret(),
     session_cookie="ingestor_session",
     same_site="strict",
-    https_only=True,   # Caddy handles TLS — never expose this container directly
-    max_age=60 * 60 * 8,  # 8 hours
+    https_only=True,
+    max_age=60 * 60 * 8,
 )
 
 app.include_router(router)

@@ -12,8 +12,11 @@ SUPPORTED = {
     ".docx", ".docm", ".dotm", ".doc",
     ".xlsx", ".xlsm", ".xlsb", ".xls",
     ".csv", ".txt", ".md",
-    ".html", ".xml",
-    ".msg",
+    ".html", ".htm", ".xml",
+    ".msg", ".eml",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp",
+    ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
+    ".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".opus", ".aiff",
 }
 IGNORED = {".strings", ".nib", ".icns", ".plist", ".gitignore", ""}
 
@@ -26,13 +29,10 @@ class InboxHandler(FileSystemEventHandler):
     def _wake(self, event):
         if event.is_directory:
             return
-        # For moves, the destination is what landed in the inbox; for
-        # creates/closes, src_path == dest_path.
         path = getattr(event, "dest_path", None) or event.src_path
         ext = Path(path).suffix.lower()
         if ext in IGNORED:
             return
-        # Worker re-scans the inbox on any signal — sending None is enough
         self._loop.call_soon_threadsafe(self._queue.put_nowait, None)
 
     on_closed = _wake

@@ -1,205 +1,144 @@
-"""
-Batched writer for the OpenWebUI SQLite database.
+"""Uploads extracted text to OpenWebUI through its public API.
 
-webui.db has one global write lock. With WORKER_CONCURRENCY=64, every file
-hitting it independently would queue on that lock and serialize the whole
-pipeline at the very end of each file's processing — even when embeddings,
-Qdrant upserts and the OS-level disk are all idle. That single lock turned
-out to be the actual throughput ceiling on this box (ingestor CPU sitting
-at ~3 %, GPU at ~10 %, but throughput stuck at ~2 files / s).
+The previous version wrote Qdrant points and rows in webui.db directly. That
+coupled the injector to OpenWebUI internals that nobody guarantees, and it broke
+silently: the injector wrote 1024 dimensional vectors while OpenWebUI queried
+with a 384 dimensional model, so the two never saw each other.
 
-This module routes every register / unregister through a single async
-writer task: it pulls items off a queue, opens one connection, and
-applies them in one transaction every ~200 ms (or as soon as the queue
-non-empty).  Each enqueueing coroutine still awaits its own future, so
-callers see normal back-pressure and exception propagation.
+Going through the API costs about three times the wall clock on a full load
+(measured: 29 minutes against 10 for 2018 documents) and removes that whole
+class of failure. Adding files in batches instead of one by one is worth 2.3x,
+so the flush below is not an optimisation but the difference between the two
+numbers above.
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import uuid
-from datetime import datetime, timezone
+from typing import Iterable
+
+import httpx
 
 from app.config import settings
-from app.database import owui_connect
 
 logger = logging.getLogger(__name__)
 
-# Each item is (op_name, args, future).
-_queue: asyncio.Queue[tuple[str, tuple, asyncio.Future]] | None = None
-_writer_task: asyncio.Task | None = None
-_FLUSH_INTERVAL_S = 0.2
+_queue: asyncio.Queue | None = None
+_task: asyncio.Task | None = None
 
 
-def _now() -> int:
-    return int(datetime.now(timezone.utc).timestamp())
+def _headers() -> dict:
+    return {"Authorization": f"Bearer {settings.openwebui_api_key}"}
 
 
-async def _apply_register(db, file_id: str, filename: str,
-                          file_hash: str, size: int) -> None:
-    now = _now()
-    meta = json.dumps({"name": filename, "content_type": "text/plain", "size": size})
-    data = json.dumps({
-        "collection_name": settings.qdrant_knowledge_base_id,
-        "content": "",
-        "metadata": {"name": filename},
-    })
-    await db.execute(
-        """INSERT OR REPLACE INTO file
-           (id, user_id, filename, meta, created_at, hash, data, updated_at, path)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (file_id, settings.openwebui_user_id, filename, meta, now,
-         file_hash, data, now, ""),
-    )
-    await db.execute("DELETE FROM knowledge_file WHERE file_id=?", (file_id,))
-    await db.execute(
-        """INSERT INTO knowledge_file
-           (id, user_id, knowledge_id, file_id, created_at, updated_at)
-           VALUES (?,?,?,?,?,?)""",
-        (str(uuid.uuid4()), settings.openwebui_user_id,
-         settings.qdrant_knowledge_base_id, file_id, now, now),
-    )
+def _url(path: str) -> str:
+    return settings.openwebui_url.rstrip("/") + path
 
 
-async def _apply_unregister(db, file_id: str) -> None:
-    await db.execute("DELETE FROM knowledge_file WHERE file_id=?", (file_id,))
-    await db.execute("DELETE FROM file WHERE id=?", (file_id,))
+async def upload(text: str, filename: str, timeout: float = 120.0) -> str:
+    """Sends one markdown document and returns its file id."""
+    files = {"file": (filename, text.encode("utf-8"), "text/markdown")}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(_url("/api/v1/files/"), headers=_headers(), files=files)
+    if response.status_code >= 400:
+        raise RuntimeError(f"upload failed {response.status_code}: {response.text[:200]}")
+    file_id = response.json().get("id")
+    if not file_id:
+        raise RuntimeError(f"upload returned no id: {response.text[:200]}")
+    return file_id
 
 
-_HANDLERS = {
-    "register": _apply_register,
-    "unregister": _apply_unregister,
-}
+async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> int:
+    """Attaches uploaded files to the knowledge base and triggers indexing."""
+    ids = [i for i in file_ids if i]
+    if not ids:
+        return 0
+    body = [{"file_id": i} for i in ids]
+    path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}/files/batch/add"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.post(_url(path), headers=_headers(), json=body)
+    if response.status_code >= 400:
+        raise RuntimeError(f"batch add failed {response.status_code}: {response.text[:200]}")
+    return len(ids)
+
+
+async def remove(file_id: str, timeout: float = 120.0) -> None:
+    path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}/file/remove"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        await client.post(_url(path), headers=_headers(), json={"file_id": file_id})
+
+
+async def reachable(timeout: float = 15.0) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(_url("/api/v1/auths/"), headers=_headers())
+        return response.status_code == 200
+    except Exception as exc:
+        logger.warning("OpenWebUI not reachable: %s", exc)
+        return False
+
+
+async def _flush(pending: list) -> None:
+    if not pending:
+        return
+    try:
+        await add_batch(pending)
+        logger.info("indexed %d files in OpenWebUI", len(pending))
+    except Exception as exc:
+        logger.error("batch add failed for %d files: %s", len(pending), exc)
+    pending.clear()
 
 
 async def _writer_loop() -> None:
-    """Drain the queue forever. Coalesce concurrent ops into single
-    transactions: as soon as one item arrives, wait briefly for stragglers,
-    then flush them all in one commit.
+    """Collects file ids and flushes them together.
 
-    Each op runs inside its own SAVEPOINT and resolves ITS OWN future with
-    success or the exact exception it raised — never the batch-wide outcome.
-    Previously a per-op failure (e.g. a webui.db schema mismatch) was logged
-    and swallowed while every future was set to success, so the worker marked
-    files 'done' that had never actually been written into the Knowledge Base.
-    """
-    assert _queue is not None
+    A batch leaves as soon as it is full or the queue goes quiet, so a single
+    dropped file is not stuck waiting for a batch that never fills."""
+    pending: list = []
     while True:
         try:
-            first = await _queue.get()
-        except asyncio.CancelledError:
-            raise
-        batch = [first]
-
-        # Brief flush window to coalesce concurrent ops
-        deadline = asyncio.get_running_loop().time() + _FLUSH_INTERVAL_S
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                item = await asyncio.wait_for(_queue.get(), timeout=remaining)
-            except asyncio.TimeoutError:
-                break
-            except asyncio.CancelledError:
-                # Resolve everything we already pulled before bailing out, so
-                # no caller is left awaiting a future that never completes.
-                _fail_batch(batch, asyncio.CancelledError())
-                raise
-            batch.append(item)
-
-        try:
-            async with owui_connect() as db:
-                errors: list[Exception | None] = []
-                for op, args, _fut in batch:
-                    handler = _HANDLERS[op]
-                    try:
-                        await handler(db, *args)
-                        errors.append(None)
-                    except Exception as e:
-                        # Record the per-op failure; its own caller's future is
-                        # resolved with this exception below (the batch as a
-                        # whole still commits the ops that succeeded). We avoid
-                        # SAVEPOINTs here on purpose: under sqlite3's implicit
-                        # transaction handling they interact badly, and a failed
-                        # op self-heals on the next register (INSERT OR REPLACE).
-                        logger.warning("OWUI %s failed for %r: %s", op, args, e)
-                        errors.append(e)
-                await db.commit()
-        except asyncio.CancelledError:
-            _fail_batch(batch, asyncio.CancelledError())
-            raise
-        except Exception as e:
-            # Could not even open/commit the DB (e.g. wrong/unmounted path).
-            # Fail every caller loudly rather than reporting phantom success.
-            logger.exception("OWUI batch flush failed: %s", e)
-            _fail_batch(batch, e)
+            timeout = settings.openwebui_batch_seconds if pending else None
+            file_id = await asyncio.wait_for(_queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            await _flush(pending)
             continue
-
-        for (_, _, fut), err in zip(batch, errors):
-            if fut.done():
-                continue
-            if err is not None:
-                fut.set_exception(err)
-            else:
-                fut.set_result(None)
-
-
-def _fail_batch(batch, exc: BaseException) -> None:
-    for _, _, fut in batch:
-        if not fut.done():
-            fut.set_exception(exc)
+        except asyncio.CancelledError:
+            await _flush(pending)
+            raise
+        if file_id is None:
+            await _flush(pending)
+            continue
+        pending.append(file_id)
+        if len(pending) >= settings.openwebui_batch_size:
+            await _flush(pending)
 
 
 def start_writer() -> None:
-    global _queue, _writer_task
-    if _writer_task is not None:
+    global _queue, _task
+    if _task and not _task.done():
         return
     _queue = asyncio.Queue()
-    _writer_task = asyncio.create_task(_writer_loop(), name="owui-writer")
+    _task = asyncio.create_task(_writer_loop())
 
 
 async def stop_writer() -> None:
-    global _writer_task
-    if _writer_task is not None:
-        _writer_task.cancel()
-        try:
-            await _writer_task
-        except (asyncio.CancelledError, Exception):
-            pass
-        _writer_task = None
-    # Drain anything still queued so no caller (e.g. a DELETE request not
-    # tracked in the worker's task set) is left awaiting forever.
+    global _task
+    if not _task:
+        return
     if _queue is not None:
-        while not _queue.empty():
-            try:
-                _, _, fut = _queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            if not fut.done():
-                fut.set_exception(RuntimeError("OWUI writer shut down"))
+        await _queue.put(None)
+        await asyncio.sleep(0)
+    _task.cancel()
+    try:
+        await _task
+    except asyncio.CancelledError:
+        pass
+    _task = None
 
 
-def _ensure_running() -> None:
-    # After stop_writer() there is no task draining the queue, so a late caller
-    # (e.g. an in-flight DELETE that resumes during shutdown) must fail fast
-    # instead of awaiting a future that will never be resolved. Checked
-    # synchronously before enqueueing, so there is no producer/drain race.
-    if _queue is None or _writer_task is None:
-        raise RuntimeError("OWUI writer not running")
-
-
-async def register(file_id: str, filename: str, file_hash: str, size: int) -> None:
-    _ensure_running()
-    fut: asyncio.Future = asyncio.get_running_loop().create_future()
-    await _queue.put(("register", (file_id, filename, file_hash, size), fut))
-    await fut
-
-
-async def unregister(file_id: str) -> None:
-    _ensure_running()
-    fut: asyncio.Future = asyncio.get_running_loop().create_future()
-    await _queue.put(("unregister", (file_id,), fut))
-    await fut
+async def register(file_id: str) -> None:
+    """Queues an uploaded file for indexing."""
+    if _queue is None:
+        raise RuntimeError("writer not started")
+    await _queue.put(file_id)

@@ -1,8 +1,5 @@
 name: Build image
 
-# No schedule. The old daily cron rebuilt and overwrote :latest every morning
-# without a single source change, which made "what is actually deployed"
-# unanswerable. Images are built when the code changes, and only then.
 on:
   push:
     branches: ["main"]
@@ -37,9 +34,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Every build gets an immutable sha-<commit> tag alongside the moving
-      # :latest. Deploys always reference the immutable one (by digest), so a
-      # rollback is a matter of pointing at the previous digest.
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5

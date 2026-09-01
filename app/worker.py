@@ -4,29 +4,24 @@ import logging
 import math
 import re
 import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 import aiosqlite
-from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import (
-    Distance, FieldCondition, Filter, MatchValue, PayloadSchemaType,
-    PointStruct, VectorParams,
-)
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from ollama import AsyncClient as OllamaClient
 
 from app import openwebui
 from app.config import settings
 from app.database import connect
 from app.watcher import SUPPORTED
 
+IMAGE_SUFFIXES = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp",
+}
+
 logger = logging.getLogger(__name__)
 
-# Strip control characters that some embed models (notably bge-m3 via Ollama)
-# choke on and return NaN for. PPTX slide-marker chunks like "--- Slide 5 ---"
-# combined with stray control chars are the usual culprits.
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MIN_CHUNK_CHARS = 3
 
@@ -34,48 +29,14 @@ _MIN_CHUNK_CHARS = 3
 def _clean_chunk(s: str) -> str:
     return _CONTROL_CHARS.sub("", s).strip()
 
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=settings.chunk_size,
-    chunk_overlap=settings.chunk_overlap,
-)
 
-# paths currently being processed — prevents duplicate tasks for the same file
 active_paths: set[str] = set()
 
-# In-flight per-file processing tasks. Tracked so we can cancel + await them
-# cleanly on shutdown instead of leaking orphans into the event loop.
 _running_tasks: set[asyncio.Task] = set()
 
 _register_lock = asyncio.Lock()
-# Serialises the short duplicate-check → claim critical section so two
-# identical-content files arriving together can never both ingest (or both be
-# discarded as duplicates). Only the cheap check + hash-claim + atomic move
-# run under it; all heavy work (embed/upsert) happens after release.
 _dedup_lock = asyncio.Lock()
-_inbox_queue: asyncio.Queue | None = None  # set by run_worker; used by retry endpoint
-
-# ---------------------------------------------------------------------------
-# Persistent clients — created once at startup, reused across all files.
-# Eliminates per-file TCP handshake / connection overhead.
-# ---------------------------------------------------------------------------
-_qdrant_global: AsyncQdrantClient | None = None
-_ollama_global: OllamaClient | None = None
-
-# ---------------------------------------------------------------------------
-# GLOBAL concurrency caps. Critically these must be shared across ALL files —
-# prior versions created one Semaphore per file, which meant worker_concurrency
-# files × embed_concurrency slots each (e.g. 64 × 16) = far more simultaneous
-# Ollama requests than intended, drowning the embedding server. With these at
-# module level the cap is honoured globally.
-# ---------------------------------------------------------------------------
-_embed_sem: asyncio.Semaphore | None = None
-_upsert_sem: asyncio.Semaphore | None = None
-
-
-def _qdrant_client() -> AsyncQdrantClient:
-    """Return the shared Qdrant client (used by routes.py too)."""
-    assert _qdrant_global is not None, "Qdrant client not initialised yet"
-    return _qdrant_global
+_inbox_queue: asyncio.Queue | None = None
 
 
 def _spawn(coro) -> asyncio.Task:
@@ -93,16 +54,7 @@ async def shutdown() -> None:
     if _running_tasks:
         await asyncio.gather(*_running_tasks, return_exceptions=True)
     await openwebui.stop_writer()
-    if _qdrant_global is not None:
-        try:
-            await _qdrant_global.close()
-        except Exception:
-            pass
 
-
-# ---------------------------------------------------------------------------
-# Startup recovery
-# ---------------------------------------------------------------------------
 
 async def recover_crashed():
     async with connect() as db:
@@ -114,7 +66,6 @@ async def recover_crashed():
 
     logger.warning("Recovering %d crashed file(s)", len(rows))
     for row in rows:
-        await _qdrant_delete(_qdrant_global, row["id"], row["filename"])
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status='queued', error_message=NULL WHERE id=?",
@@ -122,10 +73,6 @@ async def recover_crashed():
             )
             await db.commit()
 
-
-# ---------------------------------------------------------------------------
-# Register new file as 'queued' immediately on detection
-# ---------------------------------------------------------------------------
 
 async def _register_as_queued(path: Path) -> str | None:
     """Insert a 'queued' row for `path`, or return the id of the existing
@@ -142,7 +89,6 @@ async def _register_as_queued(path: Path) -> str | None:
         if existing:
             return existing["id"]
 
-        # File can disappear between the watcher event and this stat call.
         try:
             size = path.stat().st_size
         except OSError:
@@ -159,56 +105,23 @@ async def _register_as_queued(path: Path) -> str | None:
         return file_id
 
 
-# ---------------------------------------------------------------------------
-# Main worker loop
-# ---------------------------------------------------------------------------
-
 async def run_worker(inbox_queue: asyncio.Queue):
-    global _inbox_queue, _qdrant_global, _ollama_global, _embed_sem, _upsert_sem
+    global _inbox_queue
     _inbox_queue = inbox_queue
 
-    # Initialise persistent clients once — reused for every file
-    _qdrant_global = AsyncQdrantClient(
-        host=settings.qdrant_host,
-        port=settings.qdrant_port,
-        api_key=settings.qdrant_api_key,
-        https=False,
-        # Generous timeout: bge-m3 batch upserts can be a few hundred MB
-        # of payload, and Qdrant compaction occasionally pauses requests.
-        timeout=60,
-    )
-    _ollama_global = OllamaClient(host=settings.ollama_host)
-
-    # Global semaphores (see comment at module top — must NOT be per-file).
-    _embed_sem = asyncio.Semaphore(settings.embed_concurrency)
-    _upsert_sem = asyncio.Semaphore(settings.upsert_concurrency)
-
-    # Single async writer that batches OWUI sqlite commits.
     openwebui.start_writer()
 
-    # Startup steps must NEVER take the worker down: a transient Qdrant error or
-    # a config/collection mismatch used to raise here and kill run_worker, so
-    # uploads landed in the inbox but nothing was ever scanned or processed
-    # (dashboard stuck at zero). Log loudly and keep going — the processing loop
-    # below is what matters.
     try:
         await recover_crashed()
     except Exception:
         logger.exception("Startup recovery failed — continuing")
     try:
-        await _ensure_qdrant_collection()
+        await _check_openwebui()
     except Exception:
-        logger.exception("Qdrant collection setup failed — continuing; files will "
-                         "still be scanned and processed (upserts may fail until fixed)")
-    try:
-        await _check_embedding_model()
-    except Exception:
-        logger.exception("Embedding model probe failed — continuing")
+        logger.exception("OpenWebUI probe failed, continuing")
 
     sem = asyncio.Semaphore(settings.worker_concurrency)
 
-    # Resume queued files that are already in the processing dir. Wrapped so a
-    # hiccup here can't stop the worker from reaching its scan loop below.
     try:
         async with connect() as db:
             db.row_factory = aiosqlite.Row
@@ -222,10 +135,8 @@ async def run_worker(inbox_queue: asyncio.Queue):
     except Exception:
         logger.exception("Resuming queued files failed — continuing")
 
-    # Belt-and-braces in case the OS-level watcher misses an event.
     _spawn(_periodic_rescan())
 
-    # Initial inbox sweep
     inbox_queue.put_nowait(None)
 
     while True:
@@ -233,10 +144,6 @@ async def run_worker(inbox_queue: asyncio.Queue):
         while not inbox_queue.empty():
             inbox_queue.get_nowait()
 
-        # Wrap the scan so that a single bad file (e.g. a permission error
-        # on stat) can never take the whole worker offline. Without this,
-        # any uncaught exception here turns the app into a silent zombie
-        # — dashboard up, queue full, nothing being processed.
         try:
             for path in settings.inbox_dir.iterdir():
                 if not path.is_file():
@@ -252,7 +159,6 @@ async def run_worker(inbox_queue: asyncio.Queue):
                     logger.exception("Failed to register %s — skipping", path.name)
                     continue
                 if file_id is None:
-                    # File vanished before we could register it.
                     active_paths.discard(key)
                     continue
                 _spawn(_process_with_sem(sem, path, file_id))
@@ -296,10 +202,6 @@ def trigger_scan():
         _inbox_queue.put_nowait(None)
 
 
-# ---------------------------------------------------------------------------
-# File processing
-# ---------------------------------------------------------------------------
-
 async def _process_file(path: Path, file_id: str):
     original_path = path
     ext = path.suffix.lower()
@@ -310,8 +212,6 @@ async def _process_file(path: Path, file_id: str):
         if not path.exists():
             return
 
-        # Bail out immediately if the file was deleted from the DB before we started
-        # (e.g. deleted while sitting in the queue)
         async with connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT id FROM files WHERE id=?", (file_id,)) as cur:
@@ -320,15 +220,12 @@ async def _process_file(path: Path, file_id: str):
 
         loop = asyncio.get_running_loop()
 
-        # 1. Unsupported extension
         if ext not in SUPPORTED:
             _dispose(path, settings.unsupported_dir)
             await _set_status(file_id, "unsupported")
             logger.info("Unsupported: %s", path.name)
             return
 
-        # 2. Duplicate check + claim (inbox only). Hash outside the lock (in a
-        # thread pool, fully parallel); only the check→claim→move is serialised.
         if path.parent == settings.inbox_dir:
             file_hash = await loop.run_in_executor(None, _sha256, path)
             async with _dedup_lock:
@@ -346,11 +243,6 @@ async def _process_file(path: Path, file_id: str):
                     logger.info("Duplicate: %s", path.name)
                     return
 
-                # Claim BEFORE releasing the lock: persist the hash and flip to
-                # 'processing' so a sibling with identical content sees this row
-                # in the duplicate query and dedupes against it. (A 'queued' row
-                # has a NULL hash and is invisible to that query, which is why
-                # the claim must happen here, not later at step 4.)
                 async with connect() as db:
                     await db.execute(
                         "UPDATE files SET file_hash=?, status='processing' WHERE id=?",
@@ -358,7 +250,6 @@ async def _process_file(path: Path, file_id: str):
                     )
                     await db.commit()
 
-                # 3. Move to processing dir
                 proc_path = _move(path, settings.processing_dir)
                 if proc_path.name != path.name:
                     async with connect() as db:
@@ -368,12 +259,10 @@ async def _process_file(path: Path, file_id: str):
                         )
                         await db.commit()
                 path = proc_path
-            # reuse the hash computed above — content unchanged by a rename/move
         else:
             proc_path = path
             file_hash = await loop.run_in_executor(None, _sha256, path)
 
-        # 4. Mark as processing
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status='processing', file_hash=?, file_size_bytes=? WHERE id=?",
@@ -382,10 +271,6 @@ async def _process_file(path: Path, file_id: str):
             await db.commit()
         logger.info("Processing: %s", path.name)
 
-        # 5. Legacy format conversion (runs in thread pool).  May fail outright
-        # for some .ppt/.doc files (e.g. needs Java filters that aren't available)
-        # — in which case we skip the structured path and rely on the LibreOffice
-        # txt fallback below.
         extracted_path = path
         extract_ext = ext
         if ext == ".doc":
@@ -407,55 +292,28 @@ async def _process_file(path: Path, file_id: str):
                             path.name, str(e)[:120])
                 extracted_path = None
 
-        # 6. Extract text — primary structured path
         text = ""
         if extracted_path is not None:
             try:
-                text = await loop.run_in_executor(None, _extract_text, extracted_path, extract_ext)
+                text = await loop.run_in_executor(None, _extract_markdown, extracted_path)
             except Exception as e:
                 logger.info("Structured extract failed for %s — will try txt fallback: %s",
                             path.name, str(e)[:120])
 
-        # 6b. LibreOffice txt fallback — catches text in shapes / text boxes
-        # that python-docx and python-pptx silently skip, and rescues files
-        # whose structured conversion errored above.
-        if not text.strip() and ext in {".doc", ".docx", ".ppt", ".pptx", ".pptm",
-                                         ".docm", ".dotm", ".ppsx", ".xls", ".xlsx", ".xlsm"}:
-            from app.parsers.legacy import convert_to_text
-            try:
-                text = await loop.run_in_executor(None, convert_to_text, path)
-                if text.strip():
-                    logger.info("Used txt fallback for %s (%d chars)", path.name, len(text))
-            except Exception as e:
-                logger.warning("txt fallback failed for %s: %s", path.name, str(e)[:200])
-
         if not text.strip():
             raise ValueError("No text extracted")
 
-        # 7. Chunk (offloaded — splitting a multi-MB doc otherwise blocks the
-        # event loop and stalls every other file's progress for seconds)
-        chunks = await loop.run_in_executor(None, splitter.split_text, text)
-        if not chunks:
-            raise ValueError("No chunks produced")
+        file_id_remote = await _upload_markdown(proc_path.name, text)
+        stored = 1
 
-        # 8. Embed, upsert to Qdrant, and register in OpenWebUI
-        # Delete stale data first, then embed, then upsert+register in parallel.
-        stored = await _embed_and_upload(file_id, proc_path.name, chunks, file_hash, proc_path.stat().st_size)
-
-        # 9. Mark done FIRST (the DB is the source of truth), THEN dispose of
-        # the physical file. A crash between the two leaves a clean 'done' row
-        # plus a harmless orphan file — never a 'processing' row with no file,
-        # which recover_crashed() could not resume (a permanent zombie).
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status='done', qdrant_collection=?, qdrant_chunk_count=?, ingested_at=? WHERE id=?",
-                (settings.qdrant_collection, stored, datetime.now(timezone.utc).isoformat(), file_id),
+                ("openwebui", stored, datetime.now(timezone.utc).isoformat(), file_id),
             )
             await db.commit()
 
         if settings.delete_after_ingest:
-            # The file's content now lives only in the vector DB — remove the
-            # on-disk copy so nothing customer-supplied is retained on the box.
             try:
                 proc_path.unlink(missing_ok=True)
             except OSError as e:
@@ -465,8 +323,6 @@ async def _process_file(path: Path, file_id: str):
         logger.info("Done: %s (%d chunks)", proc_path.name, stored)
 
     except Exception as exc:
-        # Check whether the file still exists in the DB.  If it doesn't, the user
-        # deleted it while we were processing — not a real failure, just clean up.
         async with connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("SELECT id FROM files WHERE id=?", (file_id,)) as cur:
@@ -474,7 +330,6 @@ async def _process_file(path: Path, file_id: str):
 
         if not still_exists:
             logger.debug("Processing cancelled for %s: deleted while in progress", original_path.name)
-            # Physical file may still be in processing dir — remove it
             if proc_path is not None and proc_path.exists():
                 try:
                     proc_path.unlink()
@@ -482,20 +337,11 @@ async def _process_file(path: Path, file_id: str):
                     pass
         else:
             logger.exception("Failed: %s — %s", original_path.name, exc)
-            # The upsert and register() run in parallel, so a failure in one can
-            # leave the other already committed — partial Qdrant vectors and/or a
-            # KB row that would make a 'failed' file searchable. Clean both so a
-            # failed file leaves nothing orphaned.
             try:
-                await _qdrant_delete(_qdrant_global, file_id, original_path.name)
+                if locals().get("file_id_remote"):
+                    await openwebui.remove(file_id_remote)
             except Exception as ce:
                 logger.warning("Post-failure cleanup for %s: %s", file_id, ce)
-            # Only DELETE the source on a PERMANENT content failure — one we
-            # raised as ValueError (no text / no chunks / nothing embeddable):
-            # that file can never ingest, so keeping only its DB metadata is
-            # correct. A TRANSIENT infra error (Qdrant/Ollama/OpenWebUI/network,
-            # not a ValueError) must KEEP the file in failed/ so it's retryable —
-            # otherwise a brief DB lock would destroy an ingestable document.
             permanent = isinstance(exc, ValueError)
             failed = None
             if proc_path is not None and proc_path.exists():
@@ -509,9 +355,6 @@ async def _process_file(path: Path, file_id: str):
                     (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
             async with connect() as db:
                 if failed is not None:
-                    # Keep the DB filename in sync with the (possibly renamed)
-                    # on-disk name so retry, the .error lookup and delete all
-                    # resolve correctly.
                     await db.execute(
                         "UPDATE files SET status='failed', filename=?, error_message=? WHERE id=?",
                         (failed.name, str(exc)[:4000], file_id),
@@ -556,287 +399,127 @@ async def _set_status(file_id: str, status: str):
         await db.commit()
 
 
-# ---------------------------------------------------------------------------
-# Text extraction dispatcher
-# ---------------------------------------------------------------------------
+def _extract_markdown(path: Path) -> str:
+    """Runs the structured extractor and renders markdown.
 
-def _extract_text(path: Path, ext: str) -> str:
-    from app.parsers import pdf, office, text, msg
-    if ext == ".pdf":                          return pdf.extract(path)
-    if ext in {".pptx", ".pptm", ".ppsx"}:    return office.extract_pptx(path)
-    if ext in {".docx", ".docm", ".dotm"}:    return office.extract_docx(path)
-    if ext in {".xlsx", ".xlsm"}:             return office.extract_xlsx(path)
-    if ext == ".xls":                         return office.extract_xls(path)
-    if ext == ".xlsb":                        return office.extract_xlsb(path)
-    if ext == ".csv":                         return text.extract_csv(path)
-    if ext in {".txt", ".md"}:                return text.extract_txt(path)
-    if ext == ".html":                        return text.extract_html(path)
-    if ext == ".xml":                         return text.extract_xml(path)
-    if ext == ".msg":                         return msg.extract(path)
-    raise ValueError(f"No parser for: {ext}")
+    Markdown is what goes to OpenWebUI, and its headings sit exactly on the
+    block boundaries, so OpenWebUI's markdown splitter reproduces the structure
+    the extractor found instead of cutting blindly at a character count."""
+    from app.markdown import to_markdown
+    from app.parsers import base
+
+    kind, extractor = base.route(path)
+    if extractor is None:
+        raise ValueError(f"no parser for: {path.suffix.lower()} ({kind})")
+    doc = extractor(path)
+    _apply_models(doc, path)
+    return to_markdown(doc, path)
 
 
-# ---------------------------------------------------------------------------
-# Embedding + Qdrant
-# ---------------------------------------------------------------------------
+def _apply_models(doc, path: Path) -> None:
+    """Fills blocks that carry no text of their own.
 
-async def _embed_and_upload(
-    file_id: str, filename: str, chunks: list[str],
-    file_hash: str, file_size: int,
-) -> int:
-    """
-    Full pipeline for one file. Returns the number of chunks actually
-    embedded + stored.
+    The gate is what keeps this affordable: over the reference corpus only
+    14.5 percent of slides qualify, so this runs on 2590 of 17833 instead of
+    every image."""
+    from app.parsers import asr, video
+    from app.parsers.base import Part
+    from app.vision import gate
 
-    Delete phase:    Qdrant delete  ║  OpenWebUI unregister   (parallel)
-    Embed phase:     batches fired concurrently, capped by the GLOBAL
-                     embed semaphore so total Ollama load stays bounded.
-    Finish phase:    Qdrant upsert  ║  OpenWebUI register      (parallel)
-    """
-    ollama = _ollama_global
-    qdrant = _qdrant_global
-    assert _embed_sem is not None and _upsert_sem is not None
-
-    # ── 1. Delete stale Qdrant vectors for this file_id ───────────────────
-    # Needed only when re-ingesting (retry / crash recovery): new points get
-    # fresh uuids, so without this the old vectors would linger. For a
-    # brand-new file_id it's a cheap index lookup that matches nothing.
-    # We do NOT unregister in OpenWebUI here: _apply_register below is an
-    # INSERT OR REPLACE that already clears and rewrites the file's rows, so a
-    # separate unregister would be redundant work for every single file.
-    try:
-        await qdrant.delete(
-            collection_name=settings.qdrant_collection,
-            points_selector=Filter(
-                must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
-            ),
-        )
-    except Exception as e:
-        logger.warning("Qdrant delete failed for %s: %s", file_id, e)
-
-    # ── 2. Clean + filter chunks, then embed all batches concurrently ─────
-    # Drop empty / control-char-only / too-short chunks so Ollama doesn't
-    # produce NaN embeddings (which then 500 the entire batch).
-    chunks = [_clean_chunk(c) for c in chunks]
-    chunks = [c for c in chunks if len(c) >= _MIN_CHUNK_CHARS]
-    if not chunks:
-        raise ValueError("No usable chunks after cleaning (all whitespace / control chars)")
-
-    now = datetime.now(timezone.utc).isoformat()
-    batch_size = settings.embedding_batch_size
-    batches = [chunks[i : i + batch_size] for i in range(0, len(chunks), batch_size)]
-
-    def _is_finite_vec(vec) -> bool:
-        # bge-m3 via Ollama sometimes returns HTTP 200 with a vector that
-        # contains NaN/Inf floats (no exception raised). Cosine similarity
-        # against such a vector is NaN and silently poisons retrieval ranking
-        # for the whole collection, so these must never be upserted.
-        return bool(vec) and all(map(math.isfinite, vec))
-
-    async def _embed_one(batch: list[str]) -> list[tuple[str, list]]:
-        """
-        Return list of (chunk, embedding) pairs. On batch failure (e.g. Ollama
-        500 NaN), fall back to per-chunk embedding and silently drop chunks
-        that still error so the file as a whole still succeeds. Non-finite
-        vectors are dropped in both paths.
-        """
-        async with _embed_sem:
+    for block in doc.blocks:
+        if settings.vision_enabled and gate.needs_vision(block):
             try:
-                resp = await ollama.embed(model=settings.embedding_model, input=batch)
-                # If the server returned fewer vectors than inputs (some proxies
-                # do this without erroring), zip would silently drop the trailing
-                # chunks. Fall back to per-chunk so nothing is lost unnoticed.
-                if len(resp.embeddings) != len(batch):
-                    raise ValueError(
-                        f"embedding count mismatch: {len(resp.embeddings)} for {len(batch)} chunks"
-                    )
-                pairs = []
-                for c, v in zip(batch, resp.embeddings):
-                    if _is_finite_vec(v):
-                        pairs.append((c, v))
-                    else:
-                        logger.warning(
-                            "Dropping non-finite (NaN/Inf) embedding in %s | %r",
-                            filename, c[:60].replace("\n", " "),
-                        )
-                return pairs
-            except Exception as e:
-                emsg = str(e)
-                if not ("NaN" in emsg or "500" in emsg or "unsupported" in emsg.lower()
-                        or "mismatch" in emsg):
-                    raise
-                logger.warning(
-                    "Embed batch failed for %s (%s) — falling back to per-chunk",
-                    filename, emsg[:120],
-                )
-                pairs: list[tuple[str, list]] = []
-                for c in batch:
-                    try:
-                        r = await ollama.embed(model=settings.embedding_model, input=[c])
-                        if _is_finite_vec(r.embeddings[0]):
-                            pairs.append((c, r.embeddings[0]))
-                        else:
-                            logger.warning(
-                                "Skipping non-finite embedding in %s | %r",
-                                filename, c[:60].replace("\n", " "),
-                            )
-                    except Exception as e2:
-                        logger.warning(
-                            "Skipping unembeddable chunk in %s: %s | %r",
-                            filename, str(e2)[:80], c[:60].replace("\n", " "),
-                        )
-                return pairs
-
-    batch_results = await asyncio.gather(*[_embed_one(b) for b in batches])
-    all_pairs: list[tuple[str, list]] = [p for batch in batch_results for p in batch]
-
-    if not all_pairs:
-        raise ValueError("All chunks failed to embed (likely all NaN)")
-
-    points: list[PointStruct] = [
-        PointStruct(
-            id=str(uuid.uuid4()),
-            vector=vec,
-            payload={
-                "text": chunk,
-                "metadata": {
-                    "knowledge_base_id": settings.qdrant_knowledge_base_id,
-                    "source_file": filename,
-                    "file_id": file_id,
-                    "chunk_index": idx,
-                    "ingested_at": now,
-                },
-                "tenant_id": settings.qdrant_knowledge_base_id,
-            },
-        )
-        for idx, (chunk, vec) in enumerate(all_pairs)
-    ]
-
-    # ── 3. Upsert to Qdrant + register in OpenWebUI in parallel ───────────
-    upsert_size = 256
-
-    async def _one_upsert(slice_):
-        async with _upsert_sem:
-            await qdrant.upsert(
-                collection_name=settings.qdrant_collection,
-                points=slice_,
-            )
-
-    async def _do_upsert():
-        await asyncio.gather(*[
-            _one_upsert(points[i : i + upsert_size])
-            for i in range(0, len(points), upsert_size)
-        ])
-
-    await asyncio.gather(
-        _do_upsert(),
-        openwebui.register(file_id, filename, file_hash, file_size),
-    )
-
-    return len(points)
+                text = _describe_image(doc, block, path)
+                if text.strip():
+                    block.parts.append(Part("vlm", text.strip()))
+            except Exception as exc:
+                logger.warning("vision failed on %s: %s", path.name, str(exc)[:150])
+        if settings.asr_enabled and block.loc.get("needs_asr"):
+            try:
+                media = _media_for(block, path)
+                result = asr.transcribe(media[0], language=settings.asr_language)
+                if media[1]:
+                    shutil.rmtree(media[0].parent, ignore_errors=True)
+                if result["text"].strip():
+                    block.parts.append(Part("asr", result["text"].strip()))
+            except Exception as exc:
+                logger.warning("speech failed on %s: %s", path.name, str(exc)[:150])
 
 
-async def _qdrant_delete(qdrant: AsyncQdrantClient, file_id: str, filename: str):
-    """Delete Qdrant vectors and OpenWebUI rows for a given file_id (in parallel)."""
-    async def _del_q():
+def _media_for(block, path: Path):
+    """Returns (file, is_temporary) for a block that carries audio."""
+    if block.kind == "embedded_media":
+        return _extract_member(path, block.loc["member"]), True
+    return path, False
+
+
+def _extract_member(source: Path, member: str) -> Path:
+    import zipfile
+
+    target = Path(tempfile.mkdtemp(prefix="embedded_")) / Path(member).name
+    with zipfile.ZipFile(source) as archive, open(target, "wb") as out:
+        shutil.copyfileobj(archive.open(member), out)
+    return target
+
+
+def _describe_image(doc, block, path: Path) -> str:
+    from app.parsers import video
+    from app.vision import ocr, render, vlm
+
+    if block.kind in ("video_image", "embedded_media"):
+        media, temporary = _media_for(block, path)
         try:
-            await qdrant.delete(
-                collection_name=settings.qdrant_collection,
-                points_selector=Filter(
-                    must=[FieldCondition(key="metadata.file_id", match=MatchValue(value=file_id))]
-                ),
-            )
-        except Exception as e:
-            logger.warning("Qdrant delete failed for %s: %s", file_id, e)
+            frames = video.sample_frames(media)
+            described = [
+                (second, _read_image(png))
+                for second, png in frames
+            ]
+            return video.timeline([(s, t) for s, t in described if t.strip()])
+        finally:
+            if temporary:
+                shutil.rmtree(media.parent, ignore_errors=True)
 
-    async def _del_o():
-        try:
-            await openwebui.unregister(file_id)
-        except Exception as e:
-            logger.warning("OpenWebUI unregister failed for %s: %s", file_id, e)
+    if path.suffix.lower() in IMAGE_SUFFIXES:
+        return _read_image(path.read_bytes())
 
-    await asyncio.gather(_del_q(), _del_o())
-
-
-async def _check_embedding_model():
-    """Probe the embedding model once at startup so a missing model surfaces as
-    one clear, prominent message in the dashboard instead of every single file
-    failing with a cryptic 404."""
-    try:
-        await _ollama_global.embed(model=settings.embedding_model, input=["ping"])
-        logger.info("Embedding model '%s' is available", settings.embedding_model)
-    except Exception as e:
-        msg = str(e)
-        if "not found" in msg.lower() or "404" in msg:
-            logger.error(
-                "Embedding model '%s' is NOT installed in Ollama — run "
-                "`ollama pull %s` (or `docker exec -it ollama ollama pull %s`). "
-                "Every file will fail to embed until then.",
-                settings.embedding_model, settings.embedding_model, settings.embedding_model,
-            )
-        else:
-            logger.warning("Could not reach Ollama at %s to check model '%s': %s",
-                           settings.ollama_host, settings.embedding_model, msg[:200])
-
-
-async def _ensure_qdrant_collection():
-    qdrant = _qdrant_global
-    names = [c.name for c in (await qdrant.get_collections()).collections]
-    if settings.qdrant_collection not in names:
-        await qdrant.create_collection(
-            collection_name=settings.qdrant_collection,
-            vectors_config=VectorParams(
-                size=settings.embedding_dimensions, distance=Distance.COSINE
-            ),
-        )
-        logger.info("Created Qdrant collection: %s", settings.qdrant_collection)
+    page = block.loc.get("slide") or block.loc.get("page") or 1
+    if path.suffix.lower() == ".pdf":
+        data = render.rasterize(path, [page]).get(page, b"")
     else:
-        # Validate the existing collection's vector size. The collection name
-        # is shared with OpenWebUI, so it may already exist at a different
-        # dimension (e.g. created at 768 while bge-m3 emits 1024). Without this
-        # check every upsert fails opaquely and every file ends up 'failed'.
-        info = await qdrant.get_collection(settings.qdrant_collection)
-        params = info.config.params.vectors
-        size = getattr(params, "size", None)
-        if size is not None and size != settings.embedding_dimensions:
-            # WARN, never fatal: what actually has to match is the embedding
-            # MODEL's output dimension and the collection size. EMBEDDING_DIMENSIONS
-            # only sizes a freshly-created collection. If the model already emits
-            # vectors matching the existing collection, ingestion works fine
-            # despite this config drift; if not, individual upserts fail (files
-            # land in 'failed') — which is visible and recoverable. Killing the
-            # whole worker here would silently stop ALL processing instead.
-            logger.error(
-                "Qdrant collection '%s' has vector size %s but EMBEDDING_DIMENSIONS=%s. "
-                "Ingestion continues; if the model's real dimension differs from the "
-                "collection, upserts will fail — align EMBEDDING_DIMENSIONS (it should "
-                "match your embedding model, e.g. 1024 for bge-m3) or recreate the collection.",
-                settings.qdrant_collection, size, settings.embedding_dimensions,
-            )
-
-    # A keyword payload index on metadata.file_id turns every delete-by-file_id
-    # (re-ingest, retry, dashboard delete) from a full-collection scan into an
-    # index lookup — essential as the collection grows into the thousands.
-    # create_payload_index is idempotent, so this is safe to run every startup.
-    for field in ("metadata.file_id", "metadata.knowledge_base_id"):
-        try:
-            await qdrant.create_payload_index(
-                collection_name=settings.qdrant_collection,
-                field_name=field,
-                field_schema=PayloadSchemaType.KEYWORD,
-            )
-        except Exception as e:
-            logger.debug("Payload index on %s not (re)created: %s", field, e)
+        data = render.pages_as_png(path, [page]).get(page, b"")
+    return _read_image(data) if data else ""
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _read_image(data: bytes) -> str:
+    from app.vision import ocr, vlm
+
+    if not data:
+        return ""
+    if settings.vision_model == "tesseract":
+        return ocr.read(data)["text"]
+    return vlm.describe(data, settings.vision_model, host=settings.ollama_host)["text"]
+
+
+async def _upload_markdown(filename: str, markdown: str) -> str:
+    """Sends the extracted text and queues it for indexing."""
+    name = filename[:120] + ".md"
+    file_id = await openwebui.upload(markdown, name)
+    await openwebui.register(file_id)
+    return file_id
+
+
+async def _check_openwebui() -> None:
+    if not await openwebui.reachable():
+        logger.error(
+            "OpenWebUI not reachable at %s or API key rejected. Files will fail.",
+            settings.openwebui_url,
+        )
+
 
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):  # 1 MiB blocks
+        for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
 
@@ -869,9 +552,3 @@ def _move(src: Path, dest_dir: Path) -> Path:
     return dest
 
 
-# ---------------------------------------------------------------------------
-# OpenWebUI integration: see app/openwebui.py — all writes go through a
-# single batched async writer that coalesces commits over a short window
-# to avoid the global webui.db write-lock becoming a serializing
-# bottleneck across all concurrent files.
-# ---------------------------------------------------------------------------

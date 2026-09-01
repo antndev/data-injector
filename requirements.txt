@@ -6,6 +6,7 @@ itsdangerous
 pydantic
 pydantic-settings
 python-dotenv
+httpx
 
 watchdog
 
@@ -18,11 +19,7 @@ pyxlsb
 beautifulsoup4
 lxml
 extract-msg
-
-langchain-text-splitters
-tiktoken
-
-ollama
-qdrant-client
+olefile
+pillow
 
 aiosqlite

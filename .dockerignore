@@ -1,6 +1,3 @@
-# Keep the build context small. Without this, Docker uploads .venv, .git and the
-# whole data/ + db/ tree on every build, which is slow and pointlessly leaks
-# local runtime state into the daemon.
 .git
 .github
 .venv
@@ -9,7 +6,6 @@ __pycache__/
 *.pyo
 *.egg-info/
 
-# Local runtime state — never belongs in an image build.
 data/
 db/
 .env

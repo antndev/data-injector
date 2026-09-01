@@ -104,7 +104,6 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
 
 .foot{position:fixed;bottom:16px;left:0;right:0;text-align:center;font-size:11px;color:var(--dim)}
 
-/* language selector (top-right) */
 .lang{position:fixed;top:18px;right:18px;z-index:10}
 .lang-btn{
   display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;border-radius:15px;
@@ -201,7 +200,7 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
 </form>
 <div class="foot" data-i18n="foot">Sichere Übertragung · Inhalte werden nicht angezeigt</div>
 <script>
-// German by default; the choice is shared with the dashboard via localStorage.
+
 (function(){
   var LANG_NAMES={de:'Deutsch',en:'English'};
   var S={de:{title:'Anmeldung',sub:'Passwort eingeben',pw:'Passwort',signin:'Anmelden',

@@ -21,20 +21,18 @@ from pydantic import BaseModel
 from app import events
 from app.config import settings
 from app.database import connect
-from app.worker import _qdrant_client, _qdrant_delete, trigger_scan
+from app import openwebui
+from app.worker import trigger_scan
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 audit = logging.getLogger("audit")
 
-# Restrict ?status= to known values so typos don't silently return empty.
 StatusFilter = Literal[
     "queued", "processing", "done", "failed", "duplicate", "unsupported",
 ]
 _SSE_KEEPALIVE_S = 30.0
 
-# Reject obviously-malformed file IDs with a clean 400 instead of letting
-# them produce SQL no-ops or template errors.
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
@@ -61,16 +59,14 @@ def _client_ip(request: Request) -> str:
     """
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
-        # Original client is the first hop; subsequent entries are proxies.
         return xff.split(",")[0].strip() or "?"
     return request.client.host if request.client else "?"
 
 
 _MAX_ATTEMPTS = 5
 _LOCKOUT_SECONDS = 300
-_RATE_MAX_ENTRIES = 5000  # cap memory growth from spammy probers
+_RATE_MAX_ENTRIES = 5000
 
-# IP → (failure_count, locked_until_timestamp)
 _rate: dict[str, tuple[int, float]] = defaultdict(lambda: (0, 0.0))
 
 
@@ -131,7 +127,6 @@ async def login(request: Request, password: str = Form(default="")):
         audit.warning("login-blocked: %s (locked %ds remaining)", ip, remaining)
         return RedirectResponse(f"/login?error=locked&wait={remaining}", status_code=303)
 
-    # compare_digest prevents timing attacks
     if secrets.compare_digest(password, settings.admin_password):
         _reset(ip)
         request.session["authed"] = True
@@ -141,8 +136,6 @@ async def login(request: Request, password: str = Form(default="")):
 
     count = _record_failure(ip)
     if count >= _MAX_ATTEMPTS:
-        # This attempt tripped the lockout — show the countdown screen, not a
-        # plain "wrong password", so the user knows why the next try is blocked.
         audit.warning("login-locked: %s after %d attempts", ip, _MAX_ATTEMPTS)
         return RedirectResponse(
             f"/login?error=locked&wait={_LOCKOUT_SECONDS}", status_code=303
@@ -159,15 +152,12 @@ async def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
-
 @router.get("/events")
 async def event_stream():
     async def gen():
-        # Periodic SSE comment lines keep proxies (Caddy, nginx, browser
-        # idle-detection) from killing the connection during quiet periods.
         async for evt in events.subscribe(idle_timeout=_SSE_KEEPALIVE_S):
             if evt is None:
-                yield ": ping\n\n"  # SSE comment — clients ignore it
+                yield ": ping\n\n"
             else:
                 yield f"data: {json.dumps(evt)}\n\n"
     return StreamingResponse(
@@ -179,9 +169,6 @@ async def event_stream():
 
 @router.get("/health")
 async def health(request: Request):
-    # Report unhealthy if the background worker has died (e.g. a fatal Qdrant
-    # dimension mismatch at startup) — otherwise the container looks healthy
-    # while nothing is being ingested. The compose healthcheck restarts on 503.
     if not getattr(request.app.state, "worker_alive", True):
         return JSONResponse(
             {"ok": False, "worker": "dead", "version": settings.app_version},
@@ -210,7 +197,6 @@ async def get_file_error(file_id: str):
         raise HTTPException(404, "File not found")
 
     msg = row["error_message"] or ""
-    # Also pull the disk-side .error sidecar if present (more detail than DB truncation)
     err_path = settings.failed_dir / (row["filename"] + ".error")
     if err_path.exists():
         try:
@@ -310,7 +296,12 @@ async def delete_file(file_id: str, delete_physical: bool = False):
         raise HTTPException(404, "File not found")
     row = dict(row)
 
-    await _qdrant_delete(_qdrant_client(), row["id"], row["filename"])
+    remote = row["qdrant_collection"] if "qdrant_collection" in row.keys() else None
+    if remote:
+        try:
+            await openwebui.remove(row["id"])
+        except Exception:
+            pass
 
     async with connect() as db:
         await db.execute("DELETE FROM files WHERE id=?", (file_id,))
@@ -353,7 +344,6 @@ async def retry_file(file_id: str):
     if not src.exists():
         raise HTTPException(404, "Physical file not found in /failed")
 
-    # rename on collision in inbox
     dest = settings.inbox_dir / row["filename"]
     counter = 1
     while dest.exists():
@@ -362,7 +352,6 @@ async def retry_file(file_id: str):
     try:
         shutil.move(str(src), dest)
     except FileNotFoundError:
-        # Concurrent retry / delete won the race — surface 409 instead of 500.
         raise HTTPException(409, "File already moved by a concurrent request")
 
     err = settings.failed_dir / (row["filename"] + ".error")
@@ -419,33 +408,18 @@ async def bulk_retry(body: BulkBody):
     return {"ok": True, "queued": sum(results)}
 
 
-# ───────────────────────── Resumable upload ─────────────────────────────────
-# A tus-style offset protocol. Each upload is staged as <id>.part (the bytes —
-# whose size IS the resume cursor) plus <id>.json (filename / size /
-# fingerprint). The .part survives a server restart, so an interrupted upload
-# resumes from its current size. On completion the .part is atomically renamed
-# into the inbox, where the existing watcher/worker pick it up. The auth
-# middleware never reads the body, so PATCH's raw stream is intact.
-
 _UPLOAD_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-_UPLOAD_INNER_BLOCK = 1 << 20  # 1 MiB write blocks — flat memory for huge files
-_MAX_NAME_BYTES = 200          # safe under the 255-byte ext4/ntfs limit
+_UPLOAD_INNER_BLOCK = 1 << 20
+_MAX_NAME_BYTES = 200
 
-# One asyncio.Lock per in-flight upload_id. A single Uvicorn worker process
-# makes this airtight: it serialises concurrent PATCHes to the same upload
-# (e.g. two tabs resuming the same file) so the offset-check → append →
-# finalize sequence can't interleave on the .part's size (a TOCTOU).
 _upload_locks: dict[str, asyncio.Lock] = {}
 
 
 def _safe_filename(raw: str | None) -> str:
     """Reduce a browser-supplied filename to a single safe basename."""
-    # Browsers may send forward- or backslash paths (webkitdirectory uploads).
     name = (raw or "").replace("\\", "/").rsplit("/", 1)[-1]
-    name = "".join(c for c in name if c >= " " and c != "\x7f")  # strip control/DEL
-    name = name.strip(" .")  # leading/trailing dots & spaces break Windows shares
-    # Measure the UTF-8 byte length, not the character count — a name of fewer
-    # than 200 chars can still exceed the 255-byte filesystem limit.
+    name = "".join(c for c in name if c >= " " and c != "\x7f")
+    name = name.strip(" .")
     if not name or name in (".", "..") or len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
         if len(name.encode("utf-8", errors="ignore")) > _MAX_NAME_BYTES:
             ext = Path(name).suffix[:20]
@@ -468,8 +442,6 @@ def _staging_paths(upload_id: str) -> tuple[Path, Path]:
 
 
 def _lock_for(upload_id: str) -> asyncio.Lock:
-    # Opportunistic GC: when the table grows, drop idle locks whose .part is gone
-    # (finalized / cancelled / TTL-swept) so abandoned uploads don't leak locks.
     if len(_upload_locks) > 256:
         for uid in [u for u in _upload_locks
                     if not _upload_locks[u].locked() and not _staging_paths(u)[0].exists()]:
@@ -543,9 +515,6 @@ async def create_upload(body: UploadCreate):
     name = _safe_filename(body.filename)
     settings.uploads_tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    # Idempotent resume: a staged sidecar with the same fingerprint AND declared
-    # size is "the same file" — reuse it and report its current offset, so a
-    # client that lost its local record still resumes instead of restarting.
     if body.fingerprint:
         for sidecar in settings.uploads_tmp_dir.glob("*.json"):
             meta = _read_sidecar(sidecar)
@@ -594,8 +563,6 @@ async def patch_upload(
     final chunk atomically moves the file into the inbox and adds
     Upload-Complete: 1."""
     _check_upload_id(upload_id)
-    # Parse the header by hand so a missing/garbage value is a clean 400, not a
-    # 422 (consistent with the other upload endpoints).
     if upload_offset is None or not upload_offset.lstrip("-").isdigit():
         raise HTTPException(400, "Missing or invalid Upload-Offset header")
     upload_offset = int(upload_offset)
@@ -606,13 +573,10 @@ async def patch_upload(
     size = int(meta.get("size", 0))
 
     async with _lock_for(upload_id):
-        # Re-check under the lock: a concurrent PATCH may have finalized (and
-        # moved the .part away) while we waited.
         if not part.exists() or not sidecar.exists():
             raise HTTPException(404, "No such upload")
         real = part.stat().st_size
         if upload_offset != real:
-            # Out of sync — give the client the truth so it can re-slice.
             return Response(status_code=409, headers={"Upload-Offset": str(real)})
 
         overshoot = False
@@ -623,9 +587,6 @@ async def patch_upload(
                     continue
                 room = size - (real + written)
                 if room <= 0 or len(chunk) > room:
-                    # Client sent more than it declared — reject WITHOUT writing
-                    # the overflow, so the .part stays at its true incomplete
-                    # size instead of becoming a full-size, never-finalized orphan.
                     overshoot = True
                     break
                 fh.write(chunk); written += len(chunk)
@@ -639,13 +600,12 @@ async def patch_upload(
         if offset < size:
             return Response(status_code=204, headers={"Upload-Offset": str(offset)})
 
-        # Complete — finalize into the inbox atomically (same /data filesystem).
         dest = _inbox_dest(_safe_filename(meta.get("filename")))
         os.replace(part, dest)
         sidecar.unlink(missing_ok=True)
         _upload_locks.pop(upload_id, None)
         events.push("INFO", f"Upload complete: {dest.name}")
-        trigger_scan()  # start processing this file immediately
+        trigger_scan()
         return Response(status_code=204, headers={
             "Upload-Offset": str(size),
             "Upload-Complete": "1",

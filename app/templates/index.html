@@ -16,7 +16,6 @@
 html,body{height:100%}
 body{background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;display:flex;overflow:hidden}
 
-/* sidebar */
 aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;position:relative}
 .logout-btn{
   width:30px;height:30px;border-radius:50%;
@@ -72,7 +71,6 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 
 .spacer{flex:1;min-height:8px}
 
-/* cleanup section */
 .cleanup{
   display:none;flex-direction:column;flex-shrink:0;
   border-top:1px solid var(--line);
@@ -94,7 +92,6 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 .cleanup-btn.danger{color:var(--red);opacity:.7;border-top:1px solid var(--line);margin-top:2px}
 .cleanup-btn.danger:hover{opacity:1}
 
-/* live log */
 .log{
   display:flex;flex-direction:column;min-height:0;
   border-top:1px solid var(--line);
@@ -138,11 +135,9 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pop{from{transform:translateY(-6px);opacity:0}}
 
-/* main */
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
 
-/* live rate strip */
 .rates{display:flex;gap:24px;padding:10px 24px;border-bottom:1px solid var(--line);background:#161616;align-items:center}
 .rate{display:flex;align-items:baseline;gap:6px}
 .rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);min-width:34px}
@@ -204,7 +199,6 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .btn.d:hover{background:#2a1a1a}
 .btn.s{padding:5px 14px;font-size:12px}
 
-/* table */
 .scroll{flex:1;overflow:auto}
 table{width:100%;border-collapse:collapse}
 thead{position:sticky;top:0;background:var(--bg);z-index:1}
@@ -214,7 +208,6 @@ td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
 tr:hover td{background:var(--panel)}
 tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 
-/* incremental update animations — replaces the full-list flash */
 @keyframes rowFadeIn{from{opacity:0}to{opacity:1}}
 @keyframes rowEnterFlash{
   0%{background:rgba(62,166,255,.18)}
@@ -255,7 +248,6 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 
 #empty{padding:80px;text-align:center;color:var(--dim)}
 
-/* progress toasts (stacked bottom-right) */
 #toast-stack{
   position:fixed;bottom:24px;right:24px;z-index:200;
   display:flex;flex-direction:column;gap:10px;align-items:flex-end;
@@ -274,7 +266,6 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .toast-bar{height:100%;border-radius:3px;transition:width .15s,background .3s;width:0%}
 .toast-sub{font-size:11px;color:var(--dim)}
 
-/* modal */
 #modal-overlay{
   position:fixed;inset:0;z-index:300;
   background:rgba(0,0,0,.65);backdrop-filter:blur(2px);
@@ -295,7 +286,6 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .modal-confirm{background:#3a1a1a;border:1px solid #6a2a2a;color:var(--red);padding:7px 18px;border-radius:18px;cursor:pointer;font:inherit;font-size:13px;font-weight:500}
 .modal-confirm:hover{background:#4a2020}
 
-/* upload drop zone (sidebar) */
 .dz-wrap{border-top:1px solid var(--line);padding:10px 0 8px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
 .dz-pick{position:relative;margin:0 12px}
 #drop-zone{
@@ -310,7 +300,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 #drop-zone:hover svg,#drop-zone.drag svg{color:var(--blue)}
 #drop-zone .dz-text{font-size:12px;color:var(--mute)}
 #dz-input,#dz-dir{display:none}
-/* click-the-field menu: pick files OR a folder (a native dialog can't do both) */
+
 #dz-menu{
   position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;
   background:var(--panel);border:1px solid var(--line);border-radius:8px;
@@ -331,7 +321,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
   cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;flex-shrink:0;
 }
 #up-cancel:hover{color:var(--red)}
-/* resume chips (shown after a refresh / browser restart) */
+
 #resume-bar{margin:0 12px;display:flex;flex-direction:column;gap:5px}
 #resume-bar:empty{display:none}
 .resume-chip{
@@ -342,7 +332,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 .resume-chip:hover{background:rgba(62,166,255,.12);color:var(--text)}
 .resume-chip .rc-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .resume-chip .rc-pct{flex-shrink:0;color:var(--blue);font-variant-numeric:tabular-nums}
-/* active upload progress */
+
 #upload-progress{margin:0 12px;font-size:11px;color:var(--dim);display:none;flex-direction:column;gap:4px}
 #upload-progress.show{display:flex}
 .up-row{display:flex;align-items:center;gap:8px;font-size:11px}
@@ -516,8 +506,7 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
 
 <script>
 const $=id=>document.getElementById(id);
-// A 401 from any API call means the session expired — bounce to the login page
-// instead of letting the dashboard silently break (empty lists, dead buttons).
+
 const _origFetch=window.fetch.bind(window);
 let _redirecting=false;
 window.fetch=async(...a)=>{
@@ -526,9 +515,8 @@ window.fetch=async(...a)=>{
   return r;
 };
 
-// ── i18n — German by default, English optional, choice saved in localStorage ──
 let LANG=localStorage.getItem('lang')||'de';
-const LANG_NAMES={de:'Deutsch',en:'English'};   // shown in their own language
+const LANG_NAMES={de:'Deutsch',en:'English'};
 const I18N={
  de:{
   'nav.all':'Alle','nav.queued':'Warteschlange','nav.processing':'In Arbeit','nav.done':'Fertig','nav.failed':'Fehlgeschlagen','nav.duplicate':'Duplikate','nav.unsupported':'Nicht unterstützt',
@@ -577,8 +565,7 @@ const I18N={
   'log.queued':'Queued: {name}','log.processing':'Processing: {name}','log.done':'Done: {name} ({n} chunks)','log.duplicate':'Duplicate: {name}','log.unsupported':'Unsupported: {name}','log.failed':'Failed: {name} — {err}','log.upcomplete':'Upload complete: {name}'
  }
 };
-// Localise a server-pushed activity-log line for DISPLAY only (the raw text is
-// still used for the rate-tracking regexes). Unknown lines pass through as-is.
+
 function localizeLog(msg){
   let m;
   if(m=msg.match(/^Queued: (.+)$/)) return tf('log.queued',{name:m[1]});
@@ -598,24 +585,20 @@ function applyI18n(){
   document.querySelectorAll('[data-i18n]').forEach(el=>el.textContent=t(el.dataset.i18n));
   document.querySelectorAll('[data-i18n-ph]').forEach(el=>el.placeholder=t(el.dataset.i18nPh));
   document.querySelectorAll('[data-i18n-title]').forEach(el=>el.title=t(el.dataset.i18nTitle));
-  // Re-localise already-rendered activity-log lines (raw text kept in data-msg).
+
   document.querySelectorAll('#log-body .log-line').forEach(line=>{
     const raw=line.dataset.msg; if(raw==null) return;
     const me=line.querySelector('.msg'); if(me) me.textContent=localizeLog(raw);
   });
-  const cur=$('lang-cur');if(cur)cur.textContent=LANG_NAMES[LANG];   // button shows the CURRENT language
+  const cur=$('lang-cur');if(cur)cur.textContent=LANG_NAMES[LANG];
   document.querySelectorAll('#lang-menu button').forEach(b=>b.classList.toggle('active',b.dataset.lang===LANG));
 }
 function setLang(lang){if(!LANG_NAMES[lang]||lang===LANG)return;LANG=lang;localStorage.setItem('lang',LANG);applyI18n();load();}
 
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const sz=b=>!b?'—':b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':(b/1048576).toFixed(1)+' MB';
-const dtLoc=()=>LANG==='de'?'de-DE':'en-US';   // dates follow the chosen UI language
-// today → time · this year → day+month · older → day+month+year. Full
-// timestamp on hover via dtFull(). Follows the chosen UI language (dtLoc).
-// SQLite's created_at ('2026-06-07 12:34:56', no zone) is UTC but JS parses
-// such naive strings as LOCAL time. Normalise zone-less strings to UTC so they
-// line up with ingested_at (which is ISO+offset).
+const dtLoc=()=>LANG==='de'?'de-DE':'en-US';
+
 const toDate=s=>{if(typeof s==='string'&&!/[zZ]|[+-]\d\d:?\d\d$/.test(s))s=s.replace(' ','T')+'Z';return new Date(s);};
 const dt=s=>{
   if(!s)return'—';
@@ -626,15 +609,12 @@ const dt=s=>{
 };
 const dtFull=s=>{if(!s)return'';try{return toDate(s).toLocaleString(dtLoc());}catch{return''}};
 
-// When delete-after-ingest is on, a failed file's bytes are gone, so it can't
-// be retried from disk — you re-upload instead. Hide the retry affordances.
 const DELETE_AFTER_INGEST={{ delete_after_ingest|tojson }};
 let F='',S='',selected=new Set(),files=[];
 let pageOffset=0,hasMore=true,loadingMore=false;
 const PAGE=200;
 let reloadDebounce=null;
 
-// ── Modal (replaces browser confirm()) ───────────────────────────────────
 let _modalResolve=null;
 function showModal(title,msg,confirmLabel=t('delete'),danger=true){
   return new Promise(resolve=>{
@@ -643,7 +623,7 @@ function showModal(title,msg,confirmLabel=t('delete'),danger=true){
     $('modal-msg').textContent=msg;
     $('modal-confirm').textContent=confirmLabel;
     const c=$('modal-confirm');
-    // info-only popup (confirm label == "Close"): muted style + hide Cancel
+
     const isInfo=confirmLabel===t('close');
     $('modal-cancel').style.display=isInfo?'none':'';
     if(isInfo){c.style.background='var(--panel)';c.style.borderColor='var(--line)';c.style.color='var(--text)';}
@@ -662,7 +642,6 @@ document.addEventListener('keydown',e=>{
   else if(e.key==='Enter'){$('modal-overlay').classList.remove('show');if(_modalResolve){_modalResolve(true);_modalResolve=null;}}
 });
 
-// ── Render bulk bar ───────────────────────────────────────────────────────
 function renderBulk(){
   const n=selected.size;
   $('sel-n').textContent=n;
@@ -670,11 +649,11 @@ function renderBulk(){
   const tbody=$('rows');
   const allVis=files.length>0&&files.every(f=>selected.has(f.id));
   if(allVis){
-    // O(1): one CSS class covers all rows instantly
+
     tbody.classList.add('all-sel');
   } else {
     tbody.classList.remove('all-sel');
-    // Only touch rows whose state actually changed
+
     tbody.querySelectorAll('tr[data-id]').forEach(tr=>{
       const want=selected.has(tr.dataset.id);
       if(tr.classList.contains('sel')!==want) tr.classList.toggle('sel',want);
@@ -687,7 +666,6 @@ function renderBulk(){
   $('b-retry').style.display=allRetryable?'':'none';
 }
 
-// ── Row builder ───────────────────────────────────────────────────────────
 function rowActions(f){
   const a=[];
   if(f.status==='failed') a.push(`<button class="btn s" onclick="showErr('${f.id}')" title="${esc(t('why'))}">${esc(t('why'))}</button>`);
@@ -717,7 +695,6 @@ function makeRow(f){
   return tr;
 }
 
-// ── Counts + purge button visibility ─────────────────────────────────────
 function updateCounts(s){
   $('c-total').textContent=s.total;
   $('c-queued').textContent=s.queued;
@@ -727,7 +704,6 @@ function updateCounts(s){
   $('c-duplicates').textContent=s.duplicates;
   $('c-unsupported').textContent=s.unsupported;
 
-  // Cleanup section — show only when something needs cleaning
   const errors=s.failed+s.duplicates+s.unsupported;
   $('cleanup').style.display=errors>0?'flex':'none';
   function cbtn(id,ccid,n){$('cc-'+ccid).textContent=n;$('purge-'+id).style.display=n>0?'flex':'none';}
@@ -736,7 +712,6 @@ function updateCounts(s){
   cbtn('uns',   'uns',   s.unsupported);
 }
 
-// ── Load first page + reset ───────────────────────────────────────────────
 function fileQS(offset){
   return '/files?'+(F?`status=${encodeURIComponent(F)}&`:'')+(S?`search=${encodeURIComponent(S)}&`:'')+`offset=${offset}&limit=${PAGE}`;
 }
@@ -757,7 +732,7 @@ async function load(preserveSel=false){
     appendBatch(batch);
     if(batch.length<PAGE) hasMore=false;
     $('empty').style.display=files.length?'none':'block';
-    // Search/filter hint
+
     const hint=$('search-hint');
     if(S||F){
       const n=files.length;
@@ -777,7 +752,7 @@ function appendBatch(batch){
   batch.forEach(f=>frag.appendChild(makeRow(f)));
   $('rows').appendChild(frag);
   renderBulk();
-  // Keep hint count in sync as more pages load
+
   const hint=$('search-hint');
   if(hint.style.display!=='none'&&hint.textContent){
     const n=files.length,plus=hasMore?'+':'';
@@ -790,8 +765,7 @@ async function loadMore(){
   loadingMore=true;
   try{
     const batch=await fetch(fileQS(pageOffset)).then(r=>r.json());
-    // Deduplicate against what's already loaded — when new files arrive at the
-    // top mid-session the API offset shifts, so the next page can overlap.
+
     const known=new Set(files.map(f=>f.id));
     const fresh=batch.filter(f=>!known.has(f.id));
     appendBatch(fresh);
@@ -800,8 +774,6 @@ async function loadMore(){
   finally{loadingMore=false;}
 }
 
-// Diff-based refresh — adds new rows at top with a soft slide-in, flashes
-// rows whose status changed, never blows the whole table away.
 async function smartRefresh(){
   try{
     const [s,batch]=await Promise.all([
@@ -827,8 +799,6 @@ async function smartRefresh(){
       }
     }
 
-    // Update existing rows in place — replace cells, keep the <tr> node so
-    // selection state and animations don't restart.
     for(const f of toUpdate){
       const tr=tbody.querySelector(`tr[data-id="${f.id}"]`);
       if(!tr) continue;
@@ -840,8 +810,6 @@ async function smartRefresh(){
       tr.classList.add('row-upd');
     }
 
-    // Add brand-new rows at the top (batch is created_at DESC). Reverse so
-    // the most recent ends up topmost when prepended one at a time.
     if(toAdd.length){
       const frag=document.createDocumentFragment();
       for(const f of toAdd){
@@ -852,13 +820,10 @@ async function smartRefresh(){
       tbody.prepend(frag);
       files=[...toAdd,...files];
       pageOffset=files.length;
-      // Strip the animation class after it plays so it can re-trigger later.
+
       setTimeout(()=>tbody.querySelectorAll('tr.row-new').forEach(t=>t.classList.remove('row-new')),900);
     }
 
-    // Drop rows that vanished from the first page AND aren't in our deeper
-    // pagination cache — only safe within the first PAGE rows since we
-    // can't know what's beyond. Skip removal otherwise to avoid false drops.
     if(files.length<=PAGE){
       const removed=files.filter(f=>!newIds.has(f.id));
       for(const f of removed){
@@ -878,25 +843,22 @@ async function smartRefresh(){
   }catch(e){console.error('smartRefresh',e);}
 }
 
-// IntersectionObserver — fires when sentinel div near viewport
 new IntersectionObserver(e=>{if(e[0].isIntersecting)loadMore();},{rootMargin:'400px'})
   .observe($('sentinel'));
 
-// Status counts auto-refresh (no list reset, preserves scroll)
 async function refreshCounts(){
   try{updateCounts(await fetch('/status').then(r=>r.json()));}catch{}
 }
 setInterval(refreshCounts,3000);
 
-// ── Selection ─────────────────────────────────────────────────────────────
 function tog(id,on){on?selected.add(id):selected.delete(id);renderBulk();}
 
 $('all-cb').onchange=async e=>{
   if(e.target.checked){
-    files.forEach(f=>selected.add(f.id));  // instant visual via all-sel CSS
+    files.forEach(f=>selected.add(f.id));
     renderBulk();
     if(hasMore){
-      // Fetch all matching IDs in background so bulk acts on truly all files
+
       try{
         const ids=await fetch(idsQS(F)).then(r=>r.json());
         ids.forEach(id=>selected.add(id));
@@ -910,9 +872,6 @@ $('all-cb').onchange=async e=>{
   }
 };
 
-// ── Toasts (stackable, bottom-right) ──────────────────────────────────────
-// Each long-running action gets its OWN toast, so several deletes can run and
-// be shown at the same time instead of clobbering a single shared toast.
 const _DEL_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>';
 function makeToast(){
   const el=document.createElement('div');
@@ -935,10 +894,9 @@ function makeToast(){
   }
   return {progress,reset:()=>{start=Date.now();},done:(m,n)=>finish(m,'var(--green)',n,2500),error:m=>finish(m,'var(--red)',0,3000)};
 }
-// One-off transient toast (info/error with no progress).
+
 function toastError(msg){makeToast().error(msg);}
 
-// Batch-deletes ids with live progress updates, returns count deleted
 async function deleteWithProgress(ids){
   const total=ids.length;
   const BATCH=50;
@@ -962,7 +920,6 @@ async function deleteWithProgress(ids){
   return done;
 }
 
-// ── Bulk actions ──────────────────────────────────────────────────────────
 $('b-retry').onclick=async()=>{
   if(!await showModal(t('m.retryTitle'),tf('m.retryMsg',{n:selected.size,files:fileWord(selected.size)}),t('retry'),false))return;
   await fetch('/files/bulk/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
@@ -988,7 +945,6 @@ async function del(id){
 }
 async function rt(id){await fetch(`/files/${id}/retry`,{method:'POST'});load();}
 
-// ── Purge helpers ─────────────────────────────────────────────────────────
 async function purgeByStatus(status,countId,labelKey){
   const n=parseInt($(countId).textContent)||0;
   if(!n)return;
@@ -1003,7 +959,6 @@ $('purge-failed').onclick=()=>purgeByStatus('failed',    'c-failed',     'lbl.fa
 $('purge-dup').onclick=   ()=>purgeByStatus('duplicate', 'c-duplicates', 'lbl.dup');
 $('purge-uns').onclick=   ()=>purgeByStatus('unsupported','c-unsupported','lbl.uns');
 
-// ── Nav filter ────────────────────────────────────────────────────────────
 document.querySelectorAll('#nav button[data-f]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#nav button[data-f]').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); F=b.dataset.f; selected.clear(); load();
@@ -1012,16 +967,12 @@ document.querySelectorAll('#nav button[data-f]').forEach(b=>b.onclick=()=>{
 let _searchT;
 $('q').oninput=e=>{clearTimeout(_searchT);_searchT=setTimeout(()=>{S=e.target.value;load()},250)};
 
-// ── Live rates (exponential decay, no sliding window) ────────────────────
-// Each event contributes exp(-Δt / τ) to the rate. Two τ values are tracked:
-//   TAU      = 5s   → snappy display rate, drops near zero in ~8s
-//   TAU_ETA  = 15s  → smoother rate for ETA, less jitter when files vary
 const TAU=5;
 const TAU_ETA=15;
 const SPARK_BUCKETS=20;
 const SPARK_WINDOW_MS=5_000;
-const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);   // ~120s
-const REPLAY_CUTOFF_MS=10_000;      // ignore SSE-replay events older than this
+const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);
+const REPLAY_CUTOFF_MS=10_000;
 
 const inEvents=[],outEvents=[];
 
@@ -1029,9 +980,7 @@ function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=
 buildSpark('spark-in');buildSpark('spark-out');
 
 function trackEvent(msg,t){
-  // Each SSE connection replays the last ~300 buffered lines so the activity
-  // log survives reloads. Those replays carry their original timestamps and
-  // would otherwise spike the live rate when the page is refreshed mid-run.
+
   const evtTs=t?new Date(t).getTime():Date.now();
   if(Date.now()-evtTs>REPLAY_CUTOFF_MS) return;
 
@@ -1043,10 +992,10 @@ function liveRate(arr,tau){
   const now=Date.now();let s=0;
   for(let i=arr.length-1;i>=0;i--){
     const dt=(now-arr[i])/1000;
-    if(dt>tau*8)break;             // negligible weight — array is time-ordered
+    if(dt>tau*8)break;
     s+=Math.exp(-dt/tau);
   }
-  return s/tau;                    // events per second
+  return s/tau;
 }
 function paintSpark(id,arr){
   const el=$(id),now=Date.now(),bs=SPARK_WINDOW_MS/SPARK_BUCKETS;
@@ -1069,13 +1018,11 @@ function updateRates(){
   prune(inEvents);prune(outEvents);
   const rIn=liveRate(inEvents,TAU);
   const rOut=liveRate(outEvents,TAU);
-  const rOutEta=liveRate(outEvents,TAU_ETA);     // smoother for ETA
+  const rOutEta=liveRate(outEvents,TAU_ETA);
   $('r-in').textContent=rIn.toFixed(1);
   $('r-out').textContent=rOut.toFixed(1);
   const remaining=(parseInt($('c-queued').textContent)||0)+(parseInt($('c-processing').textContent)||0);
-  // Compute desired state, then only mutate DOM if it changed. Rewriting
-  // the inner HTML every tick would destroy the <span class="info"> node
-  // and reset its hover state — making the tooltip blink each tick.
+
   let mode,text;
   if(remaining<=0)        { mode='idle';    text='—'; }
   else if(rIn>0.3)        { mode='loading'; text=t('rate.loading'); }
@@ -1098,7 +1045,7 @@ function setEtaDisplay(mode,text){
       eta.textContent=text;
     }
   } else if(mode==='loading'){
-    // Same loading state, just refresh the text label without touching the i.
+
     const el=document.getElementById('r-eta-text');
     if(el&&el.textContent!==text) el.textContent=text;
   } else if(eta.textContent!==text){
@@ -1106,17 +1053,15 @@ function setEtaDisplay(mode,text){
   }
   _etaState={mode,text};
 }
-setInterval(updateRates,500);      // 2 Hz refresh — feels live
+setInterval(updateRates,500);
 
-// ── Live log via SSE ──────────────────────────────────────────────────────
 const logBody=$('log-body'),logHead=$('log-head');
 const MAX_LINES=300;
 let es=null;
 function fmtTime(iso){return new Date(iso).toLocaleTimeString(dtLoc(),{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
 let lastReload=0;
 function scheduleReload(){
-  // Throttle to one diff-refresh per 1s. Uses smartRefresh (incremental,
-  // animated) instead of full load() so the table doesn't flash.
+
   const now=Date.now();
   if(now-lastReload>1000){
     lastReload=now;
@@ -1133,7 +1078,7 @@ function appendLog(evt){
   const atBottom=logBody.scrollHeight-logBody.scrollTop-logBody.clientHeight<20;
   const line=document.createElement('div');
   line.className='log-line '+(evt.lvl||'INFO');
-  line.dataset.msg=evt.msg||'';   // keep raw so we can re-localise on language switch
+  line.dataset.msg=evt.msg||'';
   line.innerHTML=`<span class="ldot"></span><span class="ts">${fmtTime(evt.t)}</span><span class="msg">${esc(localizeLog(evt.msg||''))}</span>`;
   logBody.appendChild(line);
   while(logBody.children.length>MAX_LINES)logBody.removeChild(logBody.firstChild);
@@ -1149,7 +1094,7 @@ function connect(){
 connect();
 $('log-clear').onclick=async()=>{
   logBody.innerHTML='';
-  // Drain server-side ring buffer so refresh doesn't bring lines back
+
   try{await fetch('/events/clear',{method:'POST'});}catch{}
 };
 
@@ -1161,15 +1106,9 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')langEl.classList.rem
 applyI18n();
 load();
 
-// ── Resumable upload ──────────────────────────────────────────────────────
-// Chunked, offset-based (tus-style). A partial upload is durable on the server
-// (.part file, size = resume cursor) and tracked in IndexedDB here, so it
-// resumes after a page refresh or a full browser restart. Where the File
-// System Access API exists (Chromium) we persist the file handle for one-click
-// resume; elsewhere we fall back to re-selecting the same file.
 (()=>{
-  const CHUNK={{ upload_chunk_bytes }};   // server-configured UPLOAD_CHUNK_BYTES
-  const CONCURRENCY=3;               // parallel files
+  const CHUNK={{ upload_chunk_bytes }};
+  const CONCURRENCY=3;
   const MAX_RETRY=6;
   const hasFS='showOpenFilePicker' in window;
   const hasDir='showDirectoryPicker' in window;
@@ -1180,16 +1119,13 @@ load();
   const fmtBytes=b=>{if(b<1024)return (b|0)+' B';const u=['KB','MB','GB','TB'];let i=-1;do{b/=1024;i++}while(b>=1024&&i<u.length-1);return b.toFixed(b<10?1:0)+' '+u[i];};
   const fmtEta=s=>{if(!isFinite(s)||s<0)return '—';if(s<60)return Math.ceil(s)+'s';if(s<3600)return Math.round(s/60)+'m';return Math.round(s/3600)+'h';};
   const fpOf=f=>`${f.name}:${f.size}:${f.lastModified}`;
-  // Abortable sleep: a cancel/abort wakes it immediately (rejecting with
-  // AbortError) instead of leaving a job parked in backoff for up to 15s.
+
   const sleep=(ms,signal)=>new Promise((res,rej)=>{
     const id=setTimeout(res,ms);
     if(signal){if(signal.aborted){clearTimeout(id);return rej(new DOMException('aborted','AbortError'));}
       signal.addEventListener('abort',()=>{clearTimeout(id);rej(new DOMException('aborted','AbortError'));},{once:true});}
   });
-  // Hash files up to this size locally (SHA-256) to skip re-uploading content
-  // that is already indexed. Larger files skip the pre-check and rely on the
-  // server-side dedup after upload (avoids loading huge files into memory).
+
   const HASH_MAX=256*1024*1024;
   async function sha256Hex(file){
     if(file.size>HASH_MAX||!(crypto&&crypto.subtle))return null;
@@ -1199,7 +1135,6 @@ load();
     }catch{return null;}
   }
 
-  // ── IndexedDB: 'jobs' (per file, keyed by fp) + 'dirs' (per folder pick) ──
   let _db=null;
   function db(){return _db||(_db=new Promise((res,rej)=>{const r=indexedDB.open('ingestor-uploads',2);
     r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains('jobs'))d.createObjectStore('jobs',{keyPath:'fp'});if(!d.objectStoreNames.contains('dirs'))d.createObjectStore('dirs',{keyPath:'gid'});};
@@ -1211,11 +1146,10 @@ load();
   const dirsPut=o=>_tx('dirs','readwrite',s=>s.put(o));
   const dirsDel=gid=>_tx('dirs','readwrite',s=>s.delete(gid));
   const dirsAll=()=>_tx('dirs','readonly',s=>s.getAll()).then(r=>r||[]);
-  // Persist only metadata (+ handle / folder-group id where available) — never the bytes.
+
   const serial=j=>({fp:j.fp,name:j.name,size:j.size,lastModified:j.lastModified,uploadId:j.uploadId,offset:j.offset,handle:j.handle||null,gid:j.gid||null});
 
-  // ── Session state ──
-  const jobs=new Map();   // fp -> {file,handle,fp,name,size,lastModified,offset,uploadId,state,ctrl}
+  const jobs=new Map();
   let running=0,_ema=0,_emaT=0,_emaLoaded=0,cancelled=false;
 
   function showProg(){upProgress.classList.add('show');upBar.classList.remove('done','err');}
@@ -1242,13 +1176,10 @@ load();
     updateUI();
   }
 
-  const stopped=j=>cancelled||(j.ctrl&&j.ctrl.signal.aborted);  // per-job: survives the global flag reset
+  const stopped=j=>cancelled||(j.ctrl&&j.ctrl.signal.aborted);
   async function uploadJob(j){
     if(stopped(j))throw new Error('cancelled');
-    // Early duplicate skip: if this exact content is already indexed, don't
-    // upload it. Skipped for a RESUME (j.resumed) — a resumed file has a live
-    // server partial and isn't ingested yet, so re-hashing the whole thing is
-    // pure waste. Best-effort — any failure falls through to a normal upload.
+
     if(j.offset===0&&!j.resumed){
       try{
         const hash=await sha256Hex(j.file);
@@ -1259,12 +1190,12 @@ load();
       }catch{}
     }
     if(stopped(j))throw new Error('cancelled');
-    // Create or resume on the server (idempotent by fingerprint → true offset).
+
     const cr=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
     if(!cr.ok)throw new Error('create '+cr.status);
     const c=await cr.json();
-    if(stopped(j))throw new Error('cancelled');   // cancel may have jobDel'd us during the create round-trip
+    if(stopped(j))throw new Error('cancelled');
     j.uploadId=c.upload_id;j.offset=c.offset;await jobPut(serial(j));
 
     let retry=0,recreated=0;
@@ -1276,22 +1207,21 @@ load();
         r=await fetch('/uploads/'+j.uploadId,{method:'PATCH',
           headers:{'Upload-Offset':String(j.offset),'Content-Type':'application/offset+octet-stream'},body:blob,signal:j.ctrl.signal});
       }catch(netErr){
-        if(stopped(j)||netErr.name==='AbortError')throw netErr;  // stop, don't retry
+        if(stopped(j)||netErr.name==='AbortError')throw netErr;
         if(++retry>MAX_RETRY)throw netErr;
-        await sleep(Math.min(15000,500*2**retry),j.ctrl.signal);continue;   // backoff, abortable
+        await sleep(Math.min(15000,500*2**retry),j.ctrl.signal);continue;
       }
       retry=0;
       if(r.status===204||r.status===409){
         const off=parseInt(r.headers.get('Upload-Offset'));
-        if(isNaN(off))throw new Error('bad Upload-Offset header');  // never advance blindly → no spin
+        if(isNaN(off))throw new Error('bad Upload-Offset header');
         j.offset=off;
         await jobPut(serial(j));updateUI();
         if(r.headers.get('Upload-Complete')==='1')break;
       }else if(r.status===404){
-        // Server dropped the partial (TTL/cancel). Recreate — but cap it so a
-        // structural 404 can't busy-loop resending the whole file forever.
+
         if(++recreated>2)throw new Error('upload keeps disappearing server-side');
-        if(stopped(j))throw new Error('cancelled');     // don't recreate a cancelled upload
+        if(stopped(j))throw new Error('cancelled');
         await sleep(1000,j.ctrl.signal);
         const c2=await fetch('/uploads',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify({filename:j.name,size:j.size,fingerprint:j.fp}),signal:j.ctrl.signal});
@@ -1310,15 +1240,15 @@ load();
     const busy=[...jobs.values()].some(j=>j.state==='wait'||j.state==='up');
     if(running||busy)return;
     const all=[...jobs.values()];
-    if(!all.length)return;   // nothing to summarize (e.g. after cancel cleared jobs)
+    if(!all.length)return;
     const sk=all.filter(j=>j.skipped).length;
-    const dn=all.filter(j=>j.state==='done').length-sk;   // actually uploaded
+    const dn=all.filter(j=>j.state==='done').length-sk;
     const er=all.filter(j=>j.state==='err').length;
     const skTxt=sk?` · ${sk} ${t('indexed')}`:'';
     if(er){upBar.classList.add('err');upLabel.textContent=tf('up.donefail',{dn,er})+skTxt;upStats.textContent='';}
     else{upBar.classList.add('done');upBar.style.width='100%';upPct.textContent='100%';upLabel.textContent=tf('up.uploaded',{n:dn,files:fileWord(dn)})+skTxt;upStats.textContent='';}
     jobs.clear();_ema=0;_emaT=0;_emaLoaded=0;
-    load();                                  // refresh the file table
+    load();
     setTimeout(()=>{if(jobs.size===0&&!running)upProgress.classList.remove('show');},er?5000:3000);
     refreshResumeChips();
   }
@@ -1328,16 +1258,16 @@ load();
     cancelled=true;
     const snap=[...jobs.values()];
     for(const j of snap){try{j.ctrl&&j.ctrl.abort();}catch{}}
-    jobs.clear();_ema=0;_emaT=0;_emaLoaded=0;   // reset speed EMA so the next batch starts clean
+    jobs.clear();_ema=0;_emaT=0;_emaLoaded=0;
     upBar.classList.remove('done');upBar.classList.add('err');
     upLabel.textContent=t('up.cancelled');upStats.textContent='';upPct.textContent='';
-    // Best-effort: drop the server-side partials and our local records.
+
     await Promise.allSettled(snap.map(async j=>{
       await jobDel(j.fp).catch(()=>{});
       if(j.uploadId){try{await _origFetch('/uploads/'+j.uploadId,{method:'DELETE'});}catch{}}
     }));
-    cancelled=false;   // per-job signal (stopped()) still halts the aborted jobs
-    schedule();        // flush anything the user enqueued during the cancel window
+    cancelled=false;
+    schedule();
     setTimeout(()=>{if(!jobs.size&&!running){upProgress.classList.remove('show');upBar.classList.remove('err');}},2000);
     refreshResumeChips();
   }
@@ -1350,7 +1280,6 @@ load();
     showProg();schedule();
   }
 
-  // Walk dropped folders recursively → flat File[] (folders themselves skipped).
   async function collectFiles(dt){
     const items=dt.items;
     if(!items||!items.length||!items[0].webkitGetAsEntry)return [...dt.files];
@@ -1366,11 +1295,11 @@ load();
   async function pick(){
     if(hasFS){
       try{const handles=await window.showOpenFilePicker({multiple:true});for(const h of handles){const f=await h.getFile();await enqueue(f,h);}return;}
-      catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
+      catch(err){if(err&&err.name==='AbortError')return;}
     }
     dzInput.click();
   }
-  // Recurse a picked directory → collect [{file,handle}] (folders skipped).
+
   async function walkDir(dh,out){
     for await (const entry of dh.values()){
       if(entry.kind==='file'){try{out.push({file:await entry.getFile(),handle:entry});}catch{}}
@@ -1384,37 +1313,31 @@ load();
         const dh=await window.showDirectoryPicker();
         const gid=newGid();
         const items=[];await walkDir(dh,items);
-        // Store the folder handle + its ORIGINAL total bytes so the resume chip
-        // shows whole-folder progress (finished files count as 100%) instead of
-        // just the remaining files' progress.
+
         const total=items.reduce((a,x)=>a+x.file.size,0);
         try{await dirsPut({gid,name:dh.name||'Ordner',handle:dh,total,count:items.length});}catch{}
         for(const x of items)await enqueue(x.file,x.handle,false,gid);
         return;
-      }catch(err){if(err&&err.name==='AbortError')return;/* fall through to input */}
+      }catch(err){if(err&&err.name==='AbortError')return;}
     }
-    dzDir.click();   // webkitdirectory <input>: open explorer, pick one folder, all files included
+    dzDir.click();
   }
 
-  // ── Resume after refresh / browser restart ──
   function pickOne(){return new Promise(res=>{const inp=document.createElement('input');inp.type='file';inp.onchange=()=>res(inp.files[0]||null);inp.click();});}
   async function resumeSaved(s,chip){
     let file=null,handle=null;
     if(s.handle){
       try{
-        // requestPermission directly: returns 'granted' without a prompt if
-        // already granted, else prompts. Calling queryPermission first and
-        // awaiting it can consume the click's user-activation and make the
-        // prompt throw — which then wrongly fell back to re-selecting the file.
+
         const perm=await s.handle.requestPermission({mode:'read'});
         if(perm==='granted'){file=await s.handle.getFile();handle=s.handle;}
       }catch(e){console.error('handle',e);}
     }
-    if(!file)file=await pickOne();   // re-select fallback: no live handle to keep
+    if(!file)file=await pickOne();
     if(!file)return;
     if(fpOf(file)!==s.fp){await showModal(t('m.diffTitle'),t('m.diffMsg'),t('close'),false);return;}
     chip.remove();
-    await enqueue(file,handle,true);   // resumed=true → skip the redundant dedup re-hash
+    await enqueue(file,handle,true);
   }
   function mkChip(label,pct,title){
     const chip=document.createElement('div');chip.className='resume-chip';
@@ -1424,89 +1347,83 @@ load();
   async function refreshResumeChips(){
     resumeBar.innerHTML='';
     let saved=[],dirs=[];try{saved=await jobAll();dirs=await dirsAll();}catch{return;}
-    // probe the server offset for each saved (not-active) job; keep resumable ones
+
     const live=[];
     for(const s of saved){
       if(jobs.has(s.fp))continue;
       if(!s.uploadId){
-        // Still queued (not yet sent) at refresh time. A folder member is kept
-        // and resumed from 0 via the folder re-walk; a loose file is an orphan.
+
         if(s.gid){s._off=0;live.push(s);}else await jobDel(s.fp);
         continue;
       }
       let off=0,exists=true,reachable=true;
       try{const h=await fetch('/uploads/'+s.uploadId,{method:'HEAD'});if(h.status===404)exists=false;else if(h.ok)off=parseInt(h.headers.get('Upload-Offset'))||0;else reachable=false;}catch{reachable=false;}
-      if(!reachable)continue;                       // transient error → retry next refresh
-      if(!exists||off>=s.size){await jobDel(s.fp);continue;}  // finalized / done / swept → not resumable
+      if(!reachable)continue;
+      if(!exists||off>=s.size){await jobDel(s.fp);continue;}
       s._off=off;live.push(s);
     }
-    // group folder jobs by gid; everything else is an individual file
+
     const groups=new Map(),singles=[];
     for(const s of live){if(s.gid){if(!groups.has(s.gid))groups.set(s.gid,[]);groups.get(s.gid).push(s);}else singles.push(s);}
     const dirMap=new Map(dirs.map(d=>[d.gid,d]));
-    // ONE chip per folder → resumes the whole folder with a single permission grant
+
     for(const [gid,group] of groups){
       const d=dirMap.get(gid);
-      // Whole-folder %: already-finished files (gone from `group`) count as done.
-      const remain=group.reduce((a,s)=>a+s.size,0);          // bytes of files still pending
-      const remainDone=group.reduce((a,s)=>a+s._off,0);      // partial bytes of those
-      const total=(d&&d.total)||remain;                       // original folder size (fallback: remaining)
-      const done=Math.max(0,total-remain)+remainDone;         // finished files + partials of remaining
+
+      const remain=group.reduce((a,s)=>a+s.size,0);
+      const remainDone=group.reduce((a,s)=>a+s._off,0);
+      const total=(d&&d.total)||remain;
+      const done=Math.max(0,total-remain)+remainDone;
       const pct=total>0?Math.min(100,Math.round(done/total*100)):0;
       const nm=(d&&d.name)||'Ordner';
       const chip=mkChip(`📁 ${nm} (${group.length})`,pct,nm);
       chip.onclick=()=>resumeFolder(gid,d,group,chip);
       resumeBar.appendChild(chip);
     }
-    // one chip per individually-picked file
+
     for(const s of singles){
       const pct=s.size>0?Math.round(s._off/s.size*100):0;
       const chip=mkChip(s.name,pct);
       chip.onclick=()=>resumeSaved(s,chip);
       resumeBar.appendChild(chip);
     }
-    // GC a folder record only when NO saved job references its gid — not merely
-    // when this probe pass found no live members (a transient HEAD failure must
-    // not discard the stored directory handle).
+
     const keepGids=new Set(saved.filter(s=>s.gid).map(s=>s.gid));
     for(const d of dirs){if(!keepGids.has(d.gid))await dirsDel(d.gid);}
   }
-  // Re-pick a whole folder via a one-shot webkitdirectory <input> (works in
-  // every browser, incl. Firefox/Safari) → returns its files.
+
   function pickDir(){return new Promise(res=>{const inp=document.createElement('input');inp.type='file';inp.webkitdirectory=true;inp.onchange=()=>res([...inp.files]);inp.click();});}
   async function resumeFolder(gid,d,group,chip){
-    // Build fp → {file,handle} from whatever source we can get the bytes again.
+
     const map=new Map();
     let dir=d&&d.handle;
     if(dir){
       let ok=false;
       try{ok=(await dir.requestPermission({mode:'read'}))==='granted';}catch(e){console.error('dir perm',e);}
-      if(!ok)dir=null;   // grant denied / lapsed → fall through to a fresh re-pick
+      if(!ok)dir=null;
     }
     if(dir){
       const walk=async dh=>{for await(const e of dh.values()){if(e.kind==='file'){try{const f=await e.getFile();map.set(fpOf(f),{file:f,handle:e});}catch{}}else if(e.kind==='directory')await walk(e);}};
       try{await walk(dir);}catch(e){console.error('rewalk',e);return;}
-    }else if(hasDir){                            // Chromium without a usable stored handle → pick the folder again
+    }else if(hasDir){
       try{const dh=await window.showDirectoryPicker();const walk=async d2=>{for await(const e of d2.values()){if(e.kind==='file'){try{const f=await e.getFile();map.set(fpOf(f),{file:f,handle:e});}catch{}}else if(e.kind==='directory')await walk(e);}};await walk(dh);}catch{return;}
-    }else{                                       // Firefox/Safari → one webkitdirectory re-pick, no handles
+    }else{
       const files=await pickDir();if(!files||!files.length)return;
       for(const f of files)map.set(fpOf(f),{file:f,handle:null});
     }
-    // resume each file of the group from its server offset; warn if the folder didn't match
+
     let matched=0;
     for(const s of group){const m=map.get(s.fp);if(m){matched++;await enqueue(m.file,m.handle,true,gid);}}
     if(!matched){await showModal(t('m.diffTitle'),t('m.diffMsg'),t('close'),false);return;}
     chip.remove();
   }
 
-  // ── Wiring ──
   let dragDepth=0;
   dz.addEventListener('dragenter',e=>{e.preventDefault();dragDepth++;dz.classList.add('drag');});
   dz.addEventListener('dragover',e=>e.preventDefault());
   dz.addEventListener('dragleave',()=>{if(--dragDepth<=0){dragDepth=0;dz.classList.remove('drag');}});
   dz.addEventListener('drop',async e=>{e.preventDefault();dragDepth=0;dz.classList.remove('drag');const files=await collectFiles(e.dataTransfer);for(const f of files)await enqueue(f,null);});
-  // Clicking the field opens a tiny menu (a native dialog can't offer files AND
-  // folders at once), so you can pick either right where you'd otherwise drag.
+
   const dzMenu=$('dz-menu');
   const showMenu=on=>dzMenu.classList.toggle('show', on===undefined?!dzMenu.classList.contains('show'):on);
   dz.addEventListener('click',e=>{e.stopPropagation();showMenu();});
@@ -1516,9 +1433,7 @@ load();
   document.addEventListener('keydown',e=>{if(e.key==='Escape')showMenu(false);});
   dzInput.addEventListener('change',()=>{[...dzInput.files].forEach(f=>enqueue(f,null));dzInput.value='';});
   dzDir.addEventListener('change',async()=>{
-    // webkitdirectory folder pick (Firefox/Safari + Chromium fallback): give the
-    // whole folder a shared group id so it resumes as ONE folder (re-pick), not
-    // file-by-file. No handle here — resumeFolder re-picks via webkitdirectory.
+
     const files=[...dzDir.files];dzDir.value='';
     if(!files.length)return;
     const root=(files[0].webkitRelativePath||'').split('/')[0]||'Ordner';

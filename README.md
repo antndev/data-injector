@@ -1,21 +1,20 @@
 # data-injector
 
-Watches a folder for files, extracts their text, embeds it via Ollama, and indexes everything into a Qdrant vector store for use with OpenWebUI knowledge bases. Has a small web dashboard to see what is going on.
+Watches a folder for files, extracts their content as structured markdown, and uploads it into an OpenWebUI knowledge base through the public API. OpenWebUI does the splitting and embedding on its own supported path. Has a small web dashboard to see what is going on.
 
 ## How it works
 
 Drop a file into the inbox folder (or upload it from the dashboard). The watcher picks it up, runs a brief stability check to make sure the file is not still being written, then hands it off to the worker pool. Each worker:
 
 1. Checks for duplicates by SHA-256 hash
-2. Extracts text depending on the file type
-3. Splits the text into chunks
-4. Sends chunks to Ollama for embedding
-5. Upserts the resulting vectors into Qdrant
-6. Registers the file in the OpenWebUI database
+2. Extracts the content depending on the file type, as blocks that keep their origin (slide number, sheet name, page)
+3. Runs a vision model over blocks that carry no text of their own, and speech recognition over audio and video
+4. Renders the blocks as markdown
+5. Uploads that markdown to OpenWebUI and adds it to the knowledge base in batches
 
-By default (`DELETE_AFTER_INGEST=true`) a file is **deleted from disk** as soon as its vectors are in Qdrant — the content then lives only in the vector DB, nothing customer-supplied is retained on the server. The database still records that the file was ingested (filename, hash, chunk count), so duplicate detection keeps working. Set `DELETE_AFTER_INGEST=false` to keep the old behaviour of moving finished files to `<DATA_DIR>/done`.
+By default (`DELETE_AFTER_INGEST=true`) a file is **deleted from disk** as soon as its markdown is in OpenWebUI, so nothing customer-supplied is retained on the ingestor side. The database still records that the file was ingested (filename, hash, chunk count), so duplicate detection keeps working. Set `DELETE_AFTER_INGEST=false` to keep the old behaviour of moving finished files to `<DATA_DIR>/done`.
 
-With `DELETE_AFTER_INGEST=true`, **duplicates and unsupported files are also removed from disk** (their database row still records what happened) — so the only customer data retained anywhere is the extracted text + vectors inside Qdrant. With it `false`, duplicates go to `<DATA_DIR>/duplicates` and unsupported files to `<DATA_DIR>/unsupported`.
+With `DELETE_AFTER_INGEST=true`, **duplicates and unsupported files are also removed from disk** (their database row still records what happened), so the only customer data retained anywhere is the extracted markdown inside OpenWebUI. With it `false`, duplicates go to `<DATA_DIR>/duplicates` and unsupported files to `<DATA_DIR>/unsupported`.
 
 Files that fail land in `<DATA_DIR>/failed` with a `.error` sidecar explaining what went wrong (failures are kept regardless, so you can diagnose and retry them). You can retry failed files from the dashboard; a `done` file's bytes are gone, so re-running it means re-uploading.
 
@@ -24,27 +23,18 @@ Files that fail land in `<DATA_DIR>/failed` with a `.error` sidecar explaining w
 Copy `.env.example` to `.env` and fill it in.
 
 ```
-# Where all data lives — inbox, done, failed, duplicates, etc. are
-# created automatically as subdirectories on first start.
 DATA_DIR=/data
 DB_PATH=/db/ingestor.db
 
-# Qdrant
-QDRANT_HOST=qdrant
-QDRANT_PORT=6333
-QDRANT_COLLECTION=open-webui_knowledge
-QDRANT_KNOWLEDGE_BASE_ID=        # the UUID of the knowledge base in OpenWebUI
+OPENWEBUI_URL=http://openwebui:8080
+OPENWEBUI_API_KEY=
+OPENWEBUI_KNOWLEDGE_ID=
 
-# Ollama
 OLLAMA_HOST=http://host.docker.internal:11434
-EMBEDDING_MODEL=bge-m3:latest
-EMBEDDING_DIMENSIONS=1024   # must match the model — bge-m3 emits 1024
+VISION_MODEL=glm-ocr
+ASR_LANGUAGE=de
 
-# OpenWebUI
-OPENWEBUI_USER_ID=               # your user ID from the OpenWebUI database
-
-# Dashboard login — any characters, no default (app won't start without this)
-ADMIN_PASSWORD=your-strong-password
+ADMIN_PASSWORD=
 ```
 
 The dashboard runs on port 8000. Open it in a browser and enter the password.
@@ -59,16 +49,22 @@ Drop files **or folders** onto the dashboard's upload zone, or use the "Choose f
 
 **Uploads are resumable.** Each partial upload is held server-side as a `.part` file whose size is the resume cursor, and tracked in the browser's IndexedDB. So an interrupted upload continues from where it stopped rather than restarting:
 
-- **Page refresh** — incomplete uploads reappear as "resume" chips in the sidebar; on Chromium they continue automatically once you confirm, elsewhere you re-pick the same file.
-- **Browser restart** — the durable `.part` survives. On Chromium (File System Access API) click the resume chip and approve the one-time file-access prompt; the upload continues from the server's offset, sending only the remaining bytes. On Firefox/Safari, re-select the same file from the chip — it still resumes from the server offset, never from zero.
+- **Page refresh**: incomplete uploads reappear as "resume" chips in the sidebar; on Chromium they continue automatically once you confirm, elsewhere you re-pick the same file.
+- **Browser restart**: the durable `.part` survives. On Chromium (File System Access API) click the resume chip and approve the one-time file-access prompt; the upload continues from the server's offset, sending only the remaining bytes. On Firefox/Safari, re-select the same file from the chip, it still resumes from the server offset, never from zero.
 
 Abandoned partials are swept after `UPLOAD_TTL_HOURS` (default 48 h) of inactivity. Closing the tab mid-upload shows a confirmation dialog first.
 
 ## Supported file types
 
-PDF, DOCX, DOC, PPTX, PPT, XLSX, XLS, XLSB, CSV, TXT, MD, HTML, XML, MSG
+Documents: PDF, DOCX, DOCM, DOTM, DOC, PPTX, PPTM, PPSX, PPT, XLSX, XLSM, XLSB, XLS, CSV, TXT, MD, HTML, HTM, XML, MSG, EML
 
-DOC and PPT files are converted to their modern equivalents before processing. Everything else is parsed directly.
+Images: PNG, JPG, JPEG, GIF, BMP, TIF, TIFF, WEBP
+
+Video: MP4, MOV, M4V, AVI, MKV, WEBM
+
+Audio: M4A, MP3, WAV, AAC, FLAC, OGG, OPUS
+
+DOC, PPT and the macro formats go through LibreOffice first. A file whose extension lies about its content is routed by what is actually inside it. Images and text-free slides go to a vision model, audio and the sound track of a video go to whisper.cpp.
 
 ## Dashboard
 
@@ -86,22 +82,21 @@ From the dashboard you can:
 
 | Variable | Default | What it controls |
 |---|---|---|
-| `WORKER_CONCURRENCY` | 64 | How many files are processed at the same time |
-| `EMBEDDING_BATCH_SIZE` | 128 | Chunks sent per Ollama embed request |
-| `EMBED_CONCURRENCY` | 16 | Global cap on concurrent embed batches |
-| `UPSERT_CONCURRENCY` | 8 | Global cap on concurrent Qdrant upserts |
-| `CHUNK_SIZE` | 1024 | Characters per chunk |
-| `CHUNK_OVERLAP` | 100 | Overlap between consecutive chunks |
+| `WORKER_CONCURRENCY` | 4 | How many files are processed at the same time |
+| `OPENWEBUI_BATCH_SIZE` | 15 | Files added to the knowledge base per request. Batching is worth 2.3x over one by one |
+| `OPENWEBUI_BATCH_SECONDS` | 5.0 | Flush a partial batch after this much quiet, so a single dropped file never waits for a batch that will not fill |
+| `VISION_MODEL` | glm-ocr | Model used for blocks without text of their own |
+| `ASR_LANGUAGE` | de | Language passed to whisper.cpp |
 | `STABILITY_WAIT_S` | 0 | Seconds to wait after a file appears before touching it (0 = disabled, fine for SFTP / atomic copies) |
-| `DELETE_AFTER_INGEST` | true | Delete the file once its vectors are stored (content lives only in the vector DB). `false` keeps it in `<DATA_DIR>/done` |
+| `DELETE_AFTER_INGEST` | true | Delete the file once its markdown is in OpenWebUI. `false` keeps it in `<DATA_DIR>/done` |
 | `UPLOAD_CHUNK_BYTES` | 8388608 | Chunk size the dashboard uploads with (8 MiB) |
 | `UPLOAD_TTL_HOURS` | 48 | Reap abandoned upload partials after this many hours of inactivity |
 | `UPLOAD_MAX_BYTES` | 0 | Reject uploads larger than this; 0 = unlimited |
-| `OPENWEBUI_DB_PATH` | /openwebui-data/webui.db | Path to OpenWebUI's shared sqlite DB inside the container |
+| `OPENWEBUI_URL` | http://openwebui:8080 | Where OpenWebUI is reachable from this container |
 
-Higher concurrency helps when embedding is the bottleneck. If Ollama is slow, raising `EMBEDDING_BATCH_SIZE` usually helps more than raising `WORKER_CONCURRENCY`.
+Extraction is the bottleneck, not the upload. Vision and speech recognition dominate the time on a corpus with scans, images and video, so `WORKER_CONCURRENCY` above the number of usable cores buys nothing.
 
 ## License
 
-PolyForm Noncommercial License 1.0.0 — private and internal use only, no commercial use.
+PolyForm Noncommercial License 1.0.0, private and internal use only, no commercial use.
 See [LICENSE](LICENSE).
