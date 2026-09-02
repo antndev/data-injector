@@ -866,7 +866,12 @@ new IntersectionObserver(e=>{if(e[0].isIntersecting)loadMore();},{rootMargin:'40
 async function refreshCounts(){
   try{updateCounts(await fetch('/status').then(r=>r.json()));}catch{}
 }
-setInterval(refreshCounts,3000);
+
+let _listTimer=null;
+function startList(){if(!_listTimer){smartRefresh();_listTimer=setInterval(smartRefresh,3000);}}
+function stopList(){if(_listTimer){clearInterval(_listTimer);_listTimer=null;}}
+document.addEventListener('visibilitychange',()=>{document.hidden?stopList():startList();});
+startList();
 
 function tog(id,on){on?selected.add(id):selected.delete(id);renderBulk();}
 
@@ -1217,9 +1222,15 @@ load();
 
   function showProg(){upProgress.classList.add('show');upBar.classList.remove('done','err');}
   function updateUI(){
-    let total=0,sent=0,done=0,n=0,upName='';
-    for(const j of jobs.values()){if(j.skipped)continue;n++;total+=j.size;sent+=Math.min(j.offset,j.size);if(j.state==='done')done++;else if(j.state==='up'&&!upName)upName=j.name;}
+    let total=0,sent=0,done=0,n=0,skipped=0,upName='';
+    for(const j of jobs.values()){
+      n++;
+      if(j.skipped){skipped++;continue;}
+      total+=j.size;sent+=Math.min(j.offset,j.size);
+      if(j.state==='done')done++;else if(j.state==='up'&&!upName)upName=j.name;
+    }
     if(!n)return;
+    done+=skipped;
     const pct=total>0?Math.min(100,Math.round(sent/total*100)):0;
     upBar.style.width=pct+'%';upPct.textContent=pct+'%';
     upBarWrap.setAttribute('aria-valuenow',pct);
