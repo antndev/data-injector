@@ -138,7 +138,11 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
 
-.rates{display:flex;gap:24px;padding:10px 24px;border-bottom:1px solid var(--line);background:#161616;align-items:center}
+.rates{display:flex;flex-direction:column;gap:5px;padding:9px 24px 10px;border-bottom:1px solid var(--line);background:#161616}
+.rate-row{display:flex;gap:24px;align-items:center}
+.rate-row.sub{gap:22px;padding-left:1px}
+.rate-row.sub .v{font-size:14px}
+.rate-row.sub .u,.rate-row.sub .l{font-size:11px}
 .rate{display:flex;align-items:baseline;gap:6px}
 .rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);min-width:34px}
 .rate .u{font-size:11px;color:var(--dim)}
@@ -175,11 +179,6 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
   pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s, visibility .12s;z-index:51;
 }
 .rate.eta .info:hover::after,.rate.eta .info:hover::before,.rate.eta .info:focus-visible::after,.rate.eta .info:focus-visible::before{opacity:1;visibility:visible}
-.rate.lanes{margin-left:auto;gap:14px;font-size:12px;color:var(--dim)}
-.rate.lanes .lane{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
-.rate.lanes .ldot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
-.rate.lanes .ldot.v{background:var(--purple)}
-.rate.lanes .ldot.p{background:var(--green)}
 .rate.tput{color:var(--dim);font-size:12px}
 .rate.tput b{color:var(--mute);font-weight:500}
 .spark{display:flex;align-items:flex-end;gap:1px;height:18px;margin-left:6px}
@@ -212,6 +211,12 @@ th:first-child,td:first-child{padding-left:24px;width:36px}
 td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
 tr:hover td{background:var(--panel)}
 tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
+
+.rate.lane .ldot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-right:2px}
+.rate.lane .ldot.vis{background:var(--purple)}
+.rate.lane .ldot.pln{background:var(--green)}
+.rate.lane .rem{font-size:11px;color:var(--dim);margin-left:6px;font-variant-numeric:tabular-nums}
+.rate.lane.spent .v,.rate.lane.spent .u,.rate.lane.spent .l{opacity:.45}
 
 @keyframes rowFadeIn{from{opacity:0}to{opacity:1}}
 @keyframes rowEnterEdge{
@@ -465,25 +470,38 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
   </header>
 
   <div class="rates">
-    <div class="rate in">
-      <span class="arrow">↓</span>
-      <span class="v" id="r-in">0.0</span><span class="u">/s</span>
-      <span class="l" data-i18n="rate.uploads">Uploads</span>
-      <span class="spark" id="spark-in"></span>
+    <div class="rate-row">
+      <div class="rate in">
+        <span class="arrow">↓</span>
+        <span class="v" id="r-in">0.0</span><span class="u">/s</span>
+        <span class="l" data-i18n="rate.uploads">Uploads</span>
+        <span class="spark" id="spark-in"></span>
+      </div>
+      <div class="rate out">
+        <span class="arrow">↑</span>
+        <span class="v" id="r-out">0.0</span><span class="u">/s</span>
+        <span class="l" data-i18n="rate.processed">Verarbeitet</span>
+      </div>
+      <div class="rate eta">
+        <span class="v" id="r-eta">—</span>
+        <span class="l" data-i18n="rate.eta">ETA</span>
+      </div>
     </div>
-    <div class="rate out">
-      <span class="arrow">↑</span>
-      <span class="v" id="r-out">0.0</span><span class="u">/s</span>
-      <span class="l" data-i18n="rate.processed">Verarbeitet</span>
-      <span class="spark" id="spark-out"></span>
-    </div>
-    <div class="rate eta">
-      <span class="v" id="r-eta">—</span>
-      <span class="l" data-i18n="rate.eta">ETA</span>
-    </div>
-    <div class="rate lanes" id="lanes">
-      <span class="lane" id="lane-vision"><span class="ldot v"></span><span class="lv">0</span></span>
-      <span class="lane" id="lane-plain"><span class="ldot p"></span><span class="lv">0</span></span>
+    <div class="rate-row sub" id="lanes">
+      <div class="rate lane" id="lane-vision">
+        <span class="ldot vis"></span>
+        <span class="v" id="r-vision">0</span><span class="u">/min</span>
+        <span class="l" data-i18n="lane.visionShort">Bilder</span>
+        <span class="rem" id="rem-vision"></span>
+        <span class="spark" id="spark-vision"></span>
+      </div>
+      <div class="rate lane" id="lane-plain">
+        <span class="ldot pln"></span>
+        <span class="v" id="r-plain">0</span><span class="u">/min</span>
+        <span class="l" data-i18n="lane.plainShort">Übrige</span>
+        <span class="rem" id="rem-plain"></span>
+        <span class="spark" id="spark-plain"></span>
+      </div>
     </div>
   </div>
 
@@ -544,6 +562,8 @@ const I18N={
   'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden',
   'lane.vision':'Präsentationen und PDF, brauchen die Bilderkennung',
   'lane.plain':'Übrige Dateien, ohne Bilderkennung',
+  'lane.visionShort':'Bilder','lane.plainShort':'Übrige',
+  'lane.left':'{n} offen','lane.empty':'fertig',
   'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
   'th.filename':'Dateiname','th.status':'Status','th.chunks':'Chunks','th.size':'Größe','th.date':'Datum',
   'empty':'Keine Dateien','cancel':'Abbrechen','delete':'Löschen','close':'Schließen','retry':'Erneut','why':'Warum?',
@@ -573,6 +593,8 @@ const I18N={
   'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out',
   'lane.vision':'Presentations and PDF, these need image recognition',
   'lane.plain':'Everything else, no image recognition',
+  'lane.visionShort':'Images','lane.plainShort':'Others',
+  'lane.left':'{n} left','lane.empty':'done',
   'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
   'th.filename':'Filename','th.status':'Status','th.chunks':'Chunks','th.size':'Size','th.date':'Date',
   'empty':'No files','cancel':'Cancel','delete':'Delete','close':'Close','retry':'Retry','why':'Why?',
@@ -724,7 +746,7 @@ function makeRow(f){
   return tr;
 }
 
-const inEvents=[],outEvents=[],visionEvents=[],plainEvents=[];
+const inEvents=[],visionEvents=[],plainEvents=[];
 let _rPrev=null,_rPrevAt=0,_lanes={};
 function updateCounts(s){
   feedRates(s);
@@ -1044,11 +1066,10 @@ const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);
 
 
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
-buildSpark('spark-in');buildSpark('spark-out');
+buildSpark('spark-in');buildSpark('spark-vision');buildSpark('spark-plain');
 
 function feedRates(s){
   const now=Date.now();
-  const out=(s.done||0)+(s.failed||0)+(s.duplicates||0)+(s.unsupported||0);
   const inn=s.total||0;
   const L=s.lanes||{};
   const vs=(L.vision||{}).settled||0, ps=(L.plain||{}).settled||0;
@@ -1056,12 +1077,11 @@ function feedRates(s){
     const span=Math.max(1,now-_rPrevAt);
     const spread=(arr,n)=>{n=Math.min(Math.max(0,n),1000);
       for(let i=1;i<=n;i++)arr.push(_rPrevAt+Math.round(span*i/n));};
-    spread(outEvents,out-_rPrev.out);
     spread(inEvents,inn-_rPrev.inn);
     spread(visionEvents,vs-_rPrev.vs);
     spread(plainEvents,ps-_rPrev.ps);
   }
-  _rPrev={out,inn,vs,ps};_rPrevAt=now;
+  _rPrev={inn,vs,ps};_rPrevAt=now;
   _lanes=L;
 }
 function prune(a){const c=Date.now()-PRUNE_HORIZON_MS;while(a.length&&a[0]<c)a.shift();}
@@ -1106,25 +1126,30 @@ function laneETA(remaining,rate){
   if(!remaining) return 0;
   return rate>0.002 ? remaining/rate : Infinity;
 }
+function paintLane(id,rate,remaining,events,tipKey){
+  const el=$(id);
+  if(!el)return;
+  el.title=t(tipKey);
+  el.querySelector('.v').textContent=(rate*60).toFixed(rate*60<10?1:0);
+  const rem=el.querySelector('.rem');
+  rem.textContent=remaining?tf('lane.left',{n:remaining}):t('lane.empty');
+  el.classList.toggle('spent',!remaining);
+  paintSpark(id.replace('lane-','spark-'),events);
+}
 function updateRates(){
-  prune(inEvents);prune(outEvents);prune(visionEvents);prune(plainEvents);
+  prune(inEvents);prune(visionEvents);prune(plainEvents);
   const rIn=liveRate(inEvents,TAU);
-  const rOut=liveRate(outEvents,TAU);
+  const rV=liveRate(visionEvents,TAU), rP=liveRate(plainEvents,TAU);
   $('r-in').textContent=rIn.toFixed(1);
-  $('r-out').textContent=rOut.toFixed(1);
+  $('r-out').textContent=(rV+rP).toFixed(1);
 
   const V=_lanes.vision||{}, P=_lanes.plain||{};
   const vRem=(V.queued||0)+(V.processing||0);
   const pRem=(P.queued||0)+(P.processing||0);
   const remaining=vRem+pRem;
 
-  const lanesEl=$('lanes');
-  if(lanesEl){
-    lanesEl.style.display=remaining?'flex':'none';
-    const a=$('lane-vision'), b=$('lane-plain');
-    if(a){a.querySelector('.lv').textContent=vRem;a.title=t('lane.vision');}
-    if(b){b.querySelector('.lv').textContent=pRem;b.title=t('lane.plain');}
-  }
+  paintLane('lane-vision',rV,vRem,visionEvents,'lane.vision');
+  paintLane('lane-plain', rP,pRem,plainEvents, 'lane.plain');
 
   let mode,text;
   if(remaining<=0){ mode='idle'; text='—'; _etaEma=0; }
@@ -1136,7 +1161,7 @@ function updateRates(){
     else { mode='waiting'; text='…'; }
   }
   setEtaDisplay(mode,text);
-  paintSpark('spark-in',inEvents);paintSpark('spark-out',outEvents);
+  paintSpark('spark-in',inEvents);
 }
 
 let _etaState={mode:null,text:null};
