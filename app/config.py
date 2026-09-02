@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     asr_language: str = "de"
     ollama_host: str = "http://host.docker.internal:11434"
     worker_concurrency: int = 4
+    vision_concurrency: int = 8
 
     delete_after_ingest: bool = True
 

@@ -22,6 +22,8 @@ IMAGE_SUFFIXES = {
 
 logger = logging.getLogger(__name__)
 
+VISION_SUFFIXES = {".ppt", ".pptx", ".pptm", ".ppsx", ".pps", ".pot", ".potx", ".pdf"}
+
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MIN_CHUNK_CHARS = 3
 
@@ -121,6 +123,17 @@ async def run_worker(inbox_queue: asyncio.Queue):
         logger.exception("OpenWebUI probe failed, continuing")
 
     sem = asyncio.Semaphore(settings.worker_concurrency)
+    vision_sem = asyncio.Semaphore(settings.vision_concurrency)
+
+    def slot(path: Path) -> asyncio.Semaphore:
+        """Picks the lane a file belongs to.
+
+        Presentations and PDFs wait on the vision model and hold their slot for
+        tens of seconds. Sharing one semaphore with everything else let them
+        take every slot, so spreadsheets and documents stopped moving entirely
+        while hundreds sat in the queue. Two lanes keep both flowing."""
+        return vision_sem if path.suffix.lower() in VISION_SUFFIXES else sem
+
 
     try:
         async with connect() as db:
@@ -131,7 +144,7 @@ async def run_worker(inbox_queue: asyncio.Queue):
             proc = settings.processing_dir / row["filename"]
             if proc.exists() and str(proc) not in active_paths:
                 active_paths.add(str(proc))
-                _spawn(_process_with_sem(sem, proc, row["id"]))
+                _spawn(_process_with_sem(slot(proc), proc, row["id"]))
     except Exception:
         logger.exception("Resuming queued files failed — continuing")
 
@@ -161,17 +174,15 @@ async def run_worker(inbox_queue: asyncio.Queue):
                 if file_id is None:
                     active_paths.discard(key)
                     continue
-                _spawn(_process_with_sem(sem, path, file_id))
+                _spawn(_process_with_sem(slot(path), path, file_id))
         except Exception:
             logger.exception("Inbox scan failed — continuing")
 
 
 async def _process_with_sem(sem: asyncio.Semaphore, path: Path, file_id: str):
-    """
-    Stability check runs OUTSIDE the semaphore so it doesn't burn a
-    concurrency slot just sleeping.  The sem is only held while doing
-    real work (hashing, extraction, embedding, Qdrant upsert).
-    """
+    """The stability check runs outside the semaphore so a file that is still
+    being written does not burn a slot just waiting. The slot is held only for
+    the real work: hashing, extraction, image recognition and the upload."""
     if settings.stability_wait_s > 0 and path.parent == settings.inbox_dir:
         try:
             size1 = path.stat().st_size
