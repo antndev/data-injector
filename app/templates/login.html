@@ -7,8 +7,8 @@
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#0a0a0a; --panel:#161616; --line:#262626;
-  --text:#f1f1f1; --mute:#aaa; --dim:#666;
+  --bg:#0f0f0f; --panel:#1f1f1f; --hover:#272727; --line:#303030;
+  --text:#f1f1f1; --mute:#aaa; --dim:#717171;
   --blue:#3ea6ff; --red:#f28b82; --orange:#ffb74d;
 }
 html,body{height:100%}
@@ -22,11 +22,11 @@ body{
 .card{
   background:var(--panel);
   border:1px solid var(--line);
-  border-radius:14px;
+  border-radius:12px;
   padding:36px 32px 28px;
   width:340px;
   position:relative;
-  box-shadow:0 24px 60px -12px rgba(0,0,0,.5), 0 0 0 1px rgba(62,166,255,.04);
+  box-shadow:0 24px 60px -12px rgba(0,0,0,.5);
   animation:rise .4s cubic-bezier(.2,.9,.3,1.1);
 }
 .card.shake{animation:shake .4s ease-in-out}
@@ -39,8 +39,8 @@ body{
 }
 
 .icon{
-  width:44px;height:44px;border-radius:11px;
-  background:linear-gradient(135deg,#1d2a3d,#0f1722);
+  width:44px;height:44px;border-radius:12px;
+  background:var(--bg);
   border:1px solid var(--line);
   display:grid;place-items:center;
   margin:0 auto 18px;color:var(--blue);
@@ -53,7 +53,7 @@ h1{font-size:18px;font-weight:600;text-align:center;letter-spacing:-.01em}
 .field{position:relative}
 .field input{
   width:100%;
-  background:#0a0a0a;
+  background:var(--bg);
   border:1px solid var(--line);
   border-radius:8px;
   padding:12px 16px;
@@ -62,7 +62,7 @@ h1{font-size:18px;font-weight:600;text-align:center;letter-spacing:-.01em}
   transition:border-color .15s, background .15s;
 }
 .field input::placeholder{font-weight:400;color:var(--dim)}
-.field input:focus{outline:0;border-color:var(--blue);background:#0e0e0e}
+.field input:focus{outline:0;border-color:var(--blue);background:var(--bg)}
 .field input:focus + .glow{opacity:1}
 .glow{
   position:absolute;inset:-1px;border-radius:9px;
@@ -74,7 +74,7 @@ button[type=submit]{
   width:100%;margin-top:14px;
   background:var(--blue);
   border:0;color:#000;
-  padding:13px;border-radius:8px;
+  padding:13px;border-radius:999px;
   font:600 14px Inter,sans-serif;
   cursor:pointer;
   transition:transform .1s, background .15s;
@@ -110,7 +110,7 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
   background:var(--panel);border:1px solid var(--line);color:var(--mute);
   cursor:pointer;font:500 12px Inter,system-ui,sans-serif;transition:all .15s;
 }
-.lang-btn:hover{background:#1d1d1d;color:var(--text)}
+.lang-btn:hover{background:var(--hover);color:var(--text)}
 .lang-btn .globe{width:14px;height:14px;opacity:.85;flex-shrink:0}
 .lang-btn .chev{width:12px;height:12px;opacity:.6;transition:transform .15s;flex-shrink:0}
 .lang.open .lang-btn{border-color:var(--blue);color:var(--text)}
@@ -125,7 +125,7 @@ button[type=submit]:disabled{background:#1a3a5c;color:#4a7aaa;cursor:not-allowed
   background:none;border:0;color:var(--text);font:inherit;font-size:13px;cursor:pointer;
   text-align:left;padding:9px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;
 }
-.lang-menu button:hover{background:#1d1d1d}
+.lang-menu button:hover{background:var(--hover)}
 .lang-menu button.active{color:var(--blue)}
 .lang-menu button .check{width:14px;height:14px;opacity:0;flex-shrink:0}
 .lang-menu button.active .check{opacity:1}

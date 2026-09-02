@@ -205,7 +205,6 @@ def trigger_scan():
 async def _process_file(path: Path, file_id: str):
     original_path = path
     ext = path.suffix.lower()
-    tmpdir = None
     proc_path: Path | None = None
 
     try:
@@ -271,34 +270,11 @@ async def _process_file(path: Path, file_id: str):
             await db.commit()
         logger.info("Processing: %s", path.name)
 
-        extracted_path = path
-        extract_ext = ext
-        if ext == ".doc":
-            try:
-                from app.parsers.legacy import convert
-                converted, tmpdir = await loop.run_in_executor(None, convert, path, "docx")
-                extracted_path, extract_ext = converted, ".docx"
-            except Exception as e:
-                logger.info("doc→docx failed for %s — will try txt fallback: %s",
-                            path.name, str(e)[:120])
-                extracted_path = None
-        elif ext == ".ppt":
-            try:
-                from app.parsers.legacy import convert
-                converted, tmpdir = await loop.run_in_executor(None, convert, path, "pptx")
-                extracted_path, extract_ext = converted, ".pptx"
-            except Exception as e:
-                logger.info("ppt→pptx failed for %s — will try txt fallback: %s",
-                            path.name, str(e)[:120])
-                extracted_path = None
-
         text = ""
-        if extracted_path is not None:
-            try:
-                text = await loop.run_in_executor(None, _extract_markdown, extracted_path)
-            except Exception as e:
-                logger.info("Structured extract failed for %s — will try txt fallback: %s",
-                            path.name, str(e)[:120])
+        try:
+            text = await loop.run_in_executor(None, _extract_markdown, path)
+        except Exception as e:
+            logger.warning("Extraction failed for %s: %s", path.name, str(e)[:160])
 
         if not text.strip():
             raise ValueError("No text extracted")
@@ -342,17 +318,10 @@ async def _process_file(path: Path, file_id: str):
                     await openwebui.remove(file_id_remote)
             except Exception as ce:
                 logger.warning("Post-failure cleanup for %s: %s", file_id, ce)
-            permanent = isinstance(exc, ValueError)
             failed = None
             if proc_path is not None and proc_path.exists():
-                if settings.delete_after_ingest and permanent:
-                    try:
-                        proc_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-                else:
-                    failed = _move(proc_path, settings.failed_dir)
-                    (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
+                failed = _move(proc_path, settings.failed_dir)
+                (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
             async with connect() as db:
                 if failed is not None:
                     await db.execute(
@@ -367,8 +336,6 @@ async def _process_file(path: Path, file_id: str):
                 await db.commit()
     finally:
         active_paths.discard(str(original_path))
-        if tmpdir:
-            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 async def _delayed_nudge(seconds: int):
