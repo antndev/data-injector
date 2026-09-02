@@ -376,6 +376,10 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
       <span data-i18n="cleanup.uns">Alle nicht unterstützten löschen</span><span class="cc" id="cc-uns">0</span>
     </button>
+    <button class="cleanup-btn danger" id="purge-all" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+      <span data-i18n="cleanup.all">Alle Dateien löschen</span><span class="cc" id="cc-all">0</span>
+    </button>
   </div>
   <div class="dz-wrap">
     <div class="dz-pick">
@@ -524,6 +528,9 @@ const I18N={
  de:{
   'nav.all':'Alle','nav.queued':'Warteschlange','nav.processing':'In Arbeit','nav.done':'Fertig','nav.failed':'Fehlgeschlagen','nav.duplicate':'Duplikate','nav.unsupported':'Nicht unterstützt',
   'cleanup':'Aufräumen','cleanup.failed':'Alle fehlgeschlagenen löschen','cleanup.dup':'Alle Duplikate löschen','cleanup.uns':'Alle nicht unterstützten löschen',
+  'cleanup.all':'Alle Dateien löschen',
+  'm.allTitle':'Alle Dateien löschen','m.allMsg':'{n} {files} werden endgültig von Festplatte, Datenbank und Knowledge Base entfernt, auch die fertig verarbeiteten.',
+  'm.allTitle2':'Wirklich alles löschen?','m.allMsg2':'Das lässt sich nicht rückgängig machen. Die Knowledge Base ist danach leer.','m.allConfirm':'Endgültig löschen',
   'dz.text':'Dateien/Ordner ziehen oder klicken','dz.files':'Dateien','dz.folder':'Ordner','activity':'Aktivität','clear':'Leeren',
   'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden',
   'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
@@ -547,6 +554,9 @@ const I18N={
  en:{
   'nav.all':'All','nav.queued':'Queued','nav.processing':'Processing','nav.done':'Done','nav.failed':'Failed','nav.duplicate':'Duplicates','nav.unsupported':'Unsupported',
   'cleanup':'Cleanup','cleanup.failed':'Delete all failed','cleanup.dup':'Delete all duplicates','cleanup.uns':'Delete all unsupported',
+  'cleanup.all':'Delete all files',
+  'm.allTitle':'Delete all files','m.allMsg':'{n} {files} will be permanently removed from disk, database and knowledge base, including the finished ones.',
+  'm.allTitle2':'Really delete everything?','m.allMsg2':'This cannot be undone. The knowledge base will be empty afterwards.','m.allConfirm':'Delete permanently',
   'dz.text':'Drag or click to add files/folders','dz.files':'Files','dz.folder':'Folder','activity':'Activity','clear':'Clear',
   'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out',
   'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
@@ -709,11 +719,12 @@ function updateCounts(s){
   $('c-unsupported').textContent=s.unsupported;
 
   const errors=s.failed+s.duplicates+s.unsupported;
-  $('cleanup').style.display=errors>0?'flex':'none';
+  $('cleanup').style.display=s.total>0?'flex':'none';
   function cbtn(id,ccid,n){$('cc-'+ccid).textContent=n;$('purge-'+id).style.display=n>0?'flex':'none';}
   cbtn('failed','failed',s.failed);
   cbtn('dup',   'dup',   s.duplicates);
   cbtn('uns',   'uns',   s.unsupported);
+  cbtn('all',   'all',   s.total);
 }
 
 function fileQS(offset){
@@ -962,6 +973,16 @@ async function purgeByStatus(status,countId,labelKey){
 $('purge-failed').onclick=()=>purgeByStatus('failed',    'c-failed',     'lbl.failed');
 $('purge-dup').onclick=   ()=>purgeByStatus('duplicate', 'c-duplicates', 'lbl.dup');
 $('purge-uns').onclick=   ()=>purgeByStatus('unsupported','c-unsupported','lbl.uns');
+$('purge-all').onclick=async()=>{
+  const n=parseInt($('c-total').textContent)||0;
+  if(!n)return;
+  if(!await showModal(t('m.allTitle'),tf('m.allMsg',{n,files:fileWord(n)}),t('delete'),true))return;
+  if(!await showModal(t('m.allTitle2'),t('m.allMsg2'),t('m.allConfirm'),true))return;
+  const ids=await fetch(idsQS('')).then(r=>r.json());
+  if(!ids.length)return;
+  await deleteWithProgress(ids);
+  load();
+};
 
 document.querySelectorAll('#nav button[data-f]').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#nav button[data-f]').forEach(x=>x.classList.remove('on'));
