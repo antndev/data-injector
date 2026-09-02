@@ -138,36 +138,31 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
 
-.rates{display:flex;align-items:center;gap:24px;padding:9px 24px 10px;border-bottom:1px solid var(--line);background:#161616}
-.rate-stack{display:flex;flex-direction:column;gap:5px;min-width:0}
-.rate-row{display:flex;gap:26px;align-items:center}
-.rate-row.sub{gap:24px}
-.rate-row.sub .v{font-size:14px}
-.rate-row.sub .u{font-size:11px}
-.rate .l{min-width:0}
-.rate-row .l{margin-left:0;margin-right:2px}
-.rate.eta{margin-left:auto;flex-direction:column;align-items:flex-end;gap:0}
-.rate.eta .v{font-size:22px}
-.rate.eta .l{margin-left:0;font-size:11px;letter-spacing:.04em}
-.rate{display:flex;align-items:baseline;gap:6px}
-.rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);min-width:34px}
-.rate .u{font-size:11px;color:var(--dim)}
-.rate .l{font-size:12px;color:var(--mute);margin-left:4px}
-.rate .arrow{font-size:14px;margin-right:2px}
-.rate.in .arrow{color:var(--blue)}
-.rate.out .arrow{color:var(--green)}
-.rate.act .v{color:var(--yellow)}
-.rate.eta .v{color:var(--purple);font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:4px}
-.rate.eta .v.loading{color:var(--mute);font-size:14px;font-weight:500}
-.rate.eta .info{
+.rates{display:flex;align-items:center;gap:32px;padding:10px 24px;border-bottom:1px solid var(--line);background:#161616}
+.rate-grid{display:grid;grid-template-columns:max-content max-content;gap:7px 44px;align-items:center}
+.rate{display:flex;align-items:center;gap:7px}
+.rate .mark{width:14px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
+.rate .l{color:var(--mute);font-size:12px;white-space:nowrap}
+.rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);
+  min-width:46px;text-align:right}
+.rate .u{font-size:11px;color:var(--dim);min-width:30px}
+.rate .rem{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;
+  min-width:66px;white-space:nowrap}
+.eta-box{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:1px;line-height:1.1}
+.eta-box .v{font-size:26px;font-weight:600;color:var(--purple);font-variant-numeric:tabular-nums}
+.eta-box .v.loading{font-size:15px;font-weight:500;color:var(--mute)}
+.eta-box .l{font-size:10px;color:var(--dim);letter-spacing:.09em;text-transform:uppercase}
+.rate .mark.arrow{color:var(--blue)}
+.rate .mark.arrow.up{color:var(--green)}
+.eta-box .info{
   position:relative;
   display:inline-flex;align-items:center;justify-content:center;
   width:14px;height:14px;color:var(--dim);
   cursor:help;transition:color .12s;
 }
-.rate.eta .info svg{width:14px;height:14px;display:block}
-.rate.eta .info:hover,.rate.eta .info:focus-visible{color:var(--text);outline:none}
-.rate.eta .info::after{
+.eta-box .info svg{width:14px;height:14px;display:block}
+.eta-box .info:hover,.eta-box .info:focus-visible{color:var(--text);outline:none}
+.eta-box .info::after{
   content:attr(data-tip);
   position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);
   background:var(--panel);color:var(--text);
@@ -178,13 +173,13 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
   opacity:0;visibility:hidden;transition:opacity .12s, visibility .12s;
   box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:50;
 }
-.rate.eta .info::before{
+.eta-box .info::before{
   content:'';position:absolute;left:50%;top:calc(100% + 2px);transform:translateX(-50%) rotate(45deg);
   width:7px;height:7px;background:var(--panel);
   border-left:1px solid var(--line);border-top:1px solid var(--line);
   pointer-events:none;opacity:0;visibility:hidden;transition:opacity .12s, visibility .12s;z-index:51;
 }
-.rate.eta .info:hover::after,.rate.eta .info:hover::before,.rate.eta .info:focus-visible::after,.rate.eta .info:focus-visible::before{opacity:1;visibility:visible}
+.eta-box .info:hover::after,.eta-box .info:hover::before,.eta-box .info:focus-visible::after,.eta-box .info:focus-visible::before{opacity:1;visibility:visible}
 .rate.tput{color:var(--dim);font-size:12px}
 .rate.tput b{color:var(--mute);font-weight:500}
 .spark{display:flex;align-items:flex-end;gap:1px;height:18px;margin-left:6px}
@@ -218,10 +213,9 @@ td{padding:10px 16px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
 tr:hover td{background:var(--panel)}
 tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 
-.rate.lane .ldot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-right:2px}
-.rate.lane .ldot.vis{background:var(--purple)}
-.rate.lane .ldot.pln{background:var(--green)}
-.rate.lane .rem{font-size:11px;color:var(--dim);margin-left:6px;font-variant-numeric:tabular-nums}
+.rate .ldot{width:8px;height:8px;border-radius:50%;display:block}
+.rate .ldot.vis{background:var(--purple)}
+.rate .ldot.pln{background:var(--green)}
 .rate.lane.spent .v,.rate.lane.spent .u,.rate.lane.spent .l{opacity:.45}
 
 @keyframes rowFadeIn{from{opacity:0}to{opacity:1}}
@@ -476,38 +470,37 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
   </header>
 
   <div class="rates">
-    <div class="rate-stack">
-      <div class="rate-row">
-        <div class="rate in">
-          <span class="l" data-i18n="rate.uploads">Uploads</span>
-          <span class="arrow">↓</span>
-          <span class="v" id="r-in">0.0</span><span class="u">/s</span>
-          <span class="spark" id="spark-in"></span>
-        </div>
-        <div class="rate out">
-          <span class="l" data-i18n="rate.processed">Verarbeitet</span>
-          <span class="arrow">↑</span>
-          <span class="v" id="r-out">0.0</span><span class="u">/s</span>
-        </div>
+    <div class="rate-grid">
+      <div class="rate in">
+        <span class="mark arrow">↓</span>
+        <span class="l" data-i18n="rate.uploads">Uploads</span>
+        <span class="v" id="r-in">0.0</span><span class="u">/s</span>
+        <span class="rem"></span>
+        <span class="spark" id="spark-in"></span>
       </div>
-      <div class="rate-row sub" id="lanes">
-        <div class="rate lane" id="lane-vision">
-          <span class="ldot vis"></span>
-          <span class="l" data-i18n="lane.visionShort">Bilder</span>
-          <span class="v" id="r-vision">0</span><span class="u">/min</span>
-          <span class="rem" id="rem-vision"></span>
-          <span class="spark" id="spark-vision"></span>
-        </div>
-        <div class="rate lane" id="lane-plain">
-          <span class="ldot pln"></span>
-          <span class="l" data-i18n="lane.plainShort">Ohne Bilder</span>
-          <span class="v" id="r-plain">0</span><span class="u">/min</span>
-          <span class="rem" id="rem-plain"></span>
-          <span class="spark" id="spark-plain"></span>
-        </div>
+      <div class="rate out">
+        <span class="mark arrow up">↑</span>
+        <span class="l" data-i18n="rate.processed">Verarbeitet</span>
+        <span class="v" id="r-out">0.0</span><span class="u">/s</span>
+        <span class="rem"></span>
+        <span class="spark" id="spark-out"></span>
+      </div>
+      <div class="rate lane" id="lane-vision">
+        <span class="mark"><i class="ldot vis"></i></span>
+        <span class="l" data-i18n="lane.visionShort">Bilder</span>
+        <span class="v" id="r-vision">0</span><span class="u">/min</span>
+        <span class="rem" id="rem-vision"></span>
+        <span class="spark" id="spark-vision"></span>
+      </div>
+      <div class="rate lane" id="lane-plain">
+        <span class="mark"><i class="ldot pln"></i></span>
+        <span class="l" data-i18n="lane.plainShort">Ohne Bilder</span>
+        <span class="v" id="r-plain">0</span><span class="u">/min</span>
+        <span class="rem" id="rem-plain"></span>
+        <span class="spark" id="spark-plain"></span>
       </div>
     </div>
-    <div class="rate eta">
+    <div class="eta-box">
       <span class="v" id="r-eta">—</span>
       <span class="l" data-i18n="rate.eta">ETA</span>
     </div>
@@ -1074,7 +1067,7 @@ const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);
 
 
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
-buildSpark('spark-in');buildSpark('spark-vision');buildSpark('spark-plain');
+buildSpark('spark-in');buildSpark('spark-out');buildSpark('spark-vision');buildSpark('spark-plain');
 
 function feedRates(s){
   const now=Date.now();
@@ -1170,6 +1163,7 @@ function updateRates(){
   }
   setEtaDisplay(mode,text);
   paintSpark('spark-in',inEvents);
+  paintSpark('spark-out',[...visionEvents,...plainEvents].sort((a,b)=>a-b));
 }
 
 let _etaState={mode:null,text:null};
