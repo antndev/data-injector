@@ -139,21 +139,19 @@ main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
 
 .rates{display:flex;align-items:center;gap:32px;padding:10px 24px;border-bottom:1px solid var(--line);background:#161616}
-.rate-grid{display:grid;grid-template-columns:max-content max-content;gap:7px 44px;align-items:center}
-.rate{display:flex;align-items:center;gap:7px}
-.rate .mark{width:14px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px}
-.rate .l{color:var(--mute);font-size:12px;white-space:nowrap}
+.rate-grid{display:grid;grid-template-columns:max-content max-content;gap:8px 40px;align-items:center}
+.rate{display:grid;grid-template-columns:10px 96px 54px 32px 64px 88px;
+  align-items:center;column-gap:8px}
+.rate .mark{display:flex;align-items:center;justify-content:flex-start}
+.rate .l{color:var(--mute);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rate .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);
-  min-width:46px;text-align:right}
-.rate .u{font-size:11px;color:var(--dim);min-width:30px}
-.rate .rem{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;
-  min-width:66px;white-space:nowrap}
+  text-align:right}
+.rate .u{font-size:11px;color:var(--dim)}
+.rate .rem{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
 .eta-box{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;gap:1px;line-height:1.1}
 .eta-box .v{font-size:26px;font-weight:600;color:var(--purple);font-variant-numeric:tabular-nums}
 .eta-box .v.loading{font-size:15px;font-weight:500;color:var(--mute)}
 .eta-box .l{font-size:10px;color:var(--dim);letter-spacing:.09em;text-transform:uppercase}
-.rate .mark.arrow{color:var(--blue)}
-.rate .mark.arrow.up{color:var(--green)}
 .eta-box .info{
   position:relative;
   display:inline-flex;align-items:center;justify-content:center;
@@ -182,7 +180,7 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .eta-box .info:hover::after,.eta-box .info:hover::before,.eta-box .info:focus-visible::after,.eta-box .info:focus-visible::before{opacity:1;visibility:visible}
 .rate.tput{color:var(--dim);font-size:12px}
 .rate.tput b{color:var(--mute);font-weight:500}
-.spark{display:flex;align-items:flex-end;gap:1px;height:18px;margin-left:6px}
+.spark{display:flex;align-items:flex-end;gap:1px;height:18px;width:88px;overflow:hidden}
 .spark span{width:3px;background:var(--line);border-radius:1px;transition:height .3s}
 .rate.in .spark span.hot{background:var(--blue)}
 .rate.out .spark span.hot{background:var(--green)}
@@ -214,6 +212,8 @@ tr:hover td{background:var(--panel)}
 tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 
 .rate .ldot{width:8px;height:8px;border-radius:50%;display:block}
+.rate .ldot.up{background:var(--blue)}
+.rate .ldot.out{background:var(--mute)}
 .rate .ldot.med{background:var(--purple)}
 .rate .ldot.pln{background:var(--green)}
 
@@ -471,14 +471,14 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
   <div class="rates">
     <div class="rate-grid">
       <div class="rate in">
-        <span class="mark arrow">↓</span>
+        <span class="mark"><i class="ldot up"></i></span>
         <span class="l" data-i18n="rate.uploads">Uploads</span>
         <span class="v" id="r-in">0.0</span><span class="u">/s</span>
         <span class="rem"></span>
         <span class="spark" id="spark-in"></span>
       </div>
       <div class="rate out">
-        <span class="mark arrow up">↑</span>
+        <span class="mark"><i class="ldot out"></i></span>
         <span class="l" data-i18n="rate.processed">Verarbeitet</span>
         <span class="v" id="r-out">0.0</span><span class="u">/s</span>
         <span class="rem"></span>
