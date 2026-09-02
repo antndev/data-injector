@@ -214,16 +214,17 @@ async def get_file_error(file_id: str):
 async def status():
     """Counts overall and split by lane.
 
-    A presentation waits on the vision model, a spreadsheet does not, and the
-    two differ by more than an order of magnitude. One blended rate over both
-    produces an estimate that swings with whatever happens to be in the queue,
-    so the lanes are reported apart and the dashboard estimates each on its
-    own."""
+    A slide, a scan or a recording has to go through a model, a spreadsheet
+    does not, and the two differ by more than an order of magnitude. One
+    blended rate over both produces an estimate that swings with whatever
+    happens to be in the queue, so the lanes are reported apart and the
+    dashboard estimates each on its own."""
+    from app.worker import MEDIA_SUFFIXES
+
+    tests = " OR ".join(f"lower(filename) LIKE '%{e}'" for e in sorted(MEDIA_SUFFIXES))
     sql = (
         "SELECT status,"
-        " SUM(CASE WHEN lower(filename) GLOB '*.ppt*'"
-        "        OR lower(filename) GLOB '*.pdf'"
-        "        OR lower(filename) GLOB '*.pps*' THEN 1 ELSE 0 END) AS vision,"
+        f" SUM(CASE WHEN {tests} THEN 1 ELSE 0 END) AS media,"
         " COUNT(*) AS n"
         " FROM files GROUP BY status"
     )
@@ -232,18 +233,17 @@ async def status():
         async with db.execute(sql) as cur:
             rows = await cur.fetchall()
     counts = {r["status"]: r["n"] for r in rows}
-    vision = {r["status"]: (r["vision"] or 0) for r in rows}
+    media = {r["status"]: (r["media"] or 0) for r in rows}
 
     def lane(key):
+        def n(bucket):
+            hit = media.get(bucket, 0)
+            return hit if key == "media" else counts.get(bucket, 0) - hit
+
         return {
-            "queued": vision.get("queued", 0) if key == "vision" else
-                      counts.get("queued", 0) - vision.get("queued", 0),
-            "processing": vision.get("processing", 0) if key == "vision" else
-                          counts.get("processing", 0) - vision.get("processing", 0),
-            "settled": sum(
-                (vision.get(st, 0) if key == "vision" else counts.get(st, 0) - vision.get(st, 0))
-                for st in ("done", "failed", "duplicate", "unsupported")
-            ),
+            "queued": n("queued"),
+            "processing": n("processing"),
+            "settled": sum(n(st) for st in ("done", "failed", "duplicate", "unsupported")),
         }
 
     return {
@@ -254,7 +254,7 @@ async def status():
         "duplicates":  counts.get("duplicate", 0),
         "unsupported": counts.get("unsupported", 0),
         "total":       sum(counts.values()),
-        "lanes": {"vision": lane("vision"), "plain": lane("plain")},
+        "lanes": {"media": lane("media"), "plain": lane("plain")},
     }
 
 

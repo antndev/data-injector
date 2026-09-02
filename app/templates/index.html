@@ -214,7 +214,7 @@ tr:hover td{background:var(--panel)}
 tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 
 .rate .ldot{width:8px;height:8px;border-radius:50%;display:block}
-.rate .ldot.vis{background:var(--purple)}
+.rate .ldot.med{background:var(--purple)}
 .rate .ldot.pln{background:var(--green)}
 .rate.lane.spent .v,.rate.lane.spent .u,.rate.lane.spent .l{opacity:.45}
 
@@ -485,16 +485,16 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <span class="rem"></span>
         <span class="spark" id="spark-out"></span>
       </div>
-      <div class="rate lane" id="lane-vision">
-        <span class="mark"><i class="ldot vis"></i></span>
-        <span class="l" data-i18n="lane.visionShort">Bilder</span>
-        <span class="v" id="r-vision">0</span><span class="u">/min</span>
-        <span class="rem" id="rem-vision"></span>
-        <span class="spark" id="spark-vision"></span>
+      <div class="rate lane" id="lane-media">
+        <span class="mark"><i class="ldot med"></i></span>
+        <span class="l" data-i18n="lane.mediaShort">Medien</span>
+        <span class="v" id="r-media">0</span><span class="u">/min</span>
+        <span class="rem" id="rem-media"></span>
+        <span class="spark" id="spark-media"></span>
       </div>
       <div class="rate lane" id="lane-plain">
         <span class="mark"><i class="ldot pln"></i></span>
-        <span class="l" data-i18n="lane.plainShort">Ohne Bilder</span>
+        <span class="l" data-i18n="lane.plainShort">Ohne Medien</span>
         <span class="v" id="r-plain">0</span><span class="u">/min</span>
         <span class="rem" id="rem-plain"></span>
         <span class="spark" id="spark-plain"></span>
@@ -561,9 +561,9 @@ const I18N={
   'm.allTitle2':'Wirklich alles löschen?','m.allMsg2':'Das lässt sich nicht rückgängig machen. Die Knowledge Base ist danach leer.','m.allConfirm':'Endgültig löschen',
   'dz.text':'Dateien/Ordner ziehen oder klicken','dz.files':'Dateien','dz.folder':'Ordner','activity':'Aktivität','clear':'Leeren',
   'search.ph':'Dateien suchen…','selected':'ausgewählt','bulk.retry':'Erneut','bulk.delete':'Löschen','signout':'Abmelden',
-  'lane.vision':'Präsentationen und PDF, brauchen die Bilderkennung',
-  'lane.plain':'Übrige Dateien, ohne Bilderkennung',
-  'lane.visionShort':'Bilder','lane.plainShort':'Ohne Bilder',
+  'lane.media':'Präsentationen, PDF, Bilder, Ton und Video, alle brauchen ein Modell',
+  'lane.plain':'Dokumente und Tabellen, ohne Modell',
+  'lane.mediaShort':'Medien','lane.plainShort':'Ohne Medien',
   'lane.left':'{n} offen','lane.empty':'fertig',
   'rate.uploads':'Uploads','rate.processed':'Verarbeitet','rate.eta':'ETA','rate.loading':'Lädt','eta.tip':'ETA ist während des Uploads nicht verfügbar',
   'th.filename':'Dateiname','th.status':'Status','th.chunks':'Chunks','th.size':'Größe','th.date':'Datum',
@@ -592,9 +592,9 @@ const I18N={
   'm.allTitle2':'Really delete everything?','m.allMsg2':'This cannot be undone. The knowledge base will be empty afterwards.','m.allConfirm':'Delete permanently',
   'dz.text':'Drag or click to add files/folders','dz.files':'Files','dz.folder':'Folder','activity':'Activity','clear':'Clear',
   'search.ph':'Search files…','selected':'selected','bulk.retry':'Retry','bulk.delete':'Delete','signout':'Sign out',
-  'lane.vision':'Presentations and PDF, these need image recognition',
-  'lane.plain':'Everything else, no image recognition',
-  'lane.visionShort':'Image','lane.plainShort':'Non-image',
+  'lane.media':'Presentations, PDF, images, audio and video, all need a model',
+  'lane.plain':'Documents and spreadsheets, no model',
+  'lane.mediaShort':'Media','lane.plainShort':'Non-media',
   'lane.left':'{n} left','lane.empty':'done',
   'rate.uploads':'Uploads','rate.processed':'Processed','rate.eta':'ETA','rate.loading':'Loading','eta.tip':'ETA is unavailable while files are being uploaded',
   'th.filename':'Filename','th.status':'Status','th.chunks':'Chunks','th.size':'Size','th.date':'Date',
@@ -747,7 +747,7 @@ function makeRow(f){
   return tr;
 }
 
-const inEvents=[],visionEvents=[],plainEvents=[];
+const inEvents=[],mediaEvents=[],plainEvents=[];
 let _rPrev=null,_rPrevAt=0,_lanes={};
 function updateCounts(s){
   feedRates(s);
@@ -1067,22 +1067,22 @@ const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);
 
 
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
-buildSpark('spark-in');buildSpark('spark-out');buildSpark('spark-vision');buildSpark('spark-plain');
+buildSpark('spark-in');buildSpark('spark-out');buildSpark('spark-media');buildSpark('spark-plain');
 
 function feedRates(s){
   const now=Date.now();
   const inn=s.total||0;
   const L=s.lanes||{};
-  const vs=(L.vision||{}).settled||0, ps=(L.plain||{}).settled||0;
+  const ms=(L.media||{}).settled||0, ps=(L.plain||{}).settled||0;
   if(_rPrev){
     const span=Math.max(1,now-_rPrevAt);
     const spread=(arr,n)=>{n=Math.min(Math.max(0,n),1000);
       for(let i=1;i<=n;i++)arr.push(_rPrevAt+Math.round(span*i/n));};
     spread(inEvents,inn-_rPrev.inn);
-    spread(visionEvents,vs-_rPrev.vs);
+    spread(mediaEvents,ms-_rPrev.ms);
     spread(plainEvents,ps-_rPrev.ps);
   }
-  _rPrev={inn,vs,ps};_rPrevAt=now;
+  _rPrev={inn,ms,ps};_rPrevAt=now;
   _lanes=L;
 }
 function prune(a){const c=Date.now()-PRUNE_HORIZON_MS;while(a.length&&a[0]<c)a.shift();}
@@ -1138,32 +1138,32 @@ function paintLane(id,rate,remaining,events,tipKey){
   paintSpark(id.replace('lane-','spark-'),events);
 }
 function updateRates(){
-  prune(inEvents);prune(visionEvents);prune(plainEvents);
+  prune(inEvents);prune(mediaEvents);prune(plainEvents);
   const rIn=liveRate(inEvents,TAU);
-  const rV=liveRate(visionEvents,TAU), rP=liveRate(plainEvents,TAU);
+  const rM=liveRate(mediaEvents,TAU), rP=liveRate(plainEvents,TAU);
   $('r-in').textContent=rIn.toFixed(1);
-  $('r-out').textContent=(rV+rP).toFixed(1);
+  $('r-out').textContent=(rM+rP).toFixed(1);
 
-  const V=_lanes.vision||{}, P=_lanes.plain||{};
-  const vRem=(V.queued||0)+(V.processing||0);
+  const M=_lanes.media||{}, P=_lanes.plain||{};
+  const mRem=(M.queued||0)+(M.processing||0);
   const pRem=(P.queued||0)+(P.processing||0);
-  const remaining=vRem+pRem;
+  const remaining=mRem+pRem;
 
-  paintLane('lane-vision',rV,vRem,visionEvents,'lane.vision');
+  paintLane('lane-media',rM,mRem,mediaEvents,'lane.media');
   paintLane('lane-plain', rP,pRem,plainEvents, 'lane.plain');
 
   let mode,text;
   if(remaining<=0){ mode='idle'; text='—'; _etaEma=0; }
   else if(rIn>0.3){ mode='loading'; text=t('rate.loading'); }
   else {
-    const worst=Math.max(laneETA(vRem,liveRate(visionEvents,TAU_ETA)),
+    const worst=Math.max(laneETA(mRem,liveRate(mediaEvents,TAU_ETA)),
                          laneETA(pRem,liveRate(plainEvents,TAU_ETA)));
     if(isFinite(worst)&&worst>0){ mode='eta'; text=fmtETA(smoothETA(worst)); }
     else { mode='waiting'; text='…'; }
   }
   setEtaDisplay(mode,text);
   paintSpark('spark-in',inEvents);
-  paintSpark('spark-out',[...visionEvents,...plainEvents].sort((a,b)=>a-b));
+  paintSpark('spark-out',[...mediaEvents,...plainEvents].sort((a,b)=>a-b));
 }
 
 let _etaState={mode:null,text:null};
