@@ -216,7 +216,6 @@ tr.sel td,#rows.all-sel tr td{background:#1c2a3a}
 .rate .ldot{width:8px;height:8px;border-radius:50%;display:block}
 .rate .ldot.med{background:var(--purple)}
 .rate .ldot.pln{background:var(--green)}
-.rate.lane.spent .v,.rate.lane.spent .u,.rate.lane.spent .l{opacity:.45}
 
 @keyframes rowFadeIn{from{opacity:0}to{opacity:1}}
 @keyframes rowEnterEdge{
@@ -500,8 +499,8 @@ input[type=checkbox]:checked::after{content:'';width:5px;height:9px;border:solid
         <span class="spark" id="spark-plain"></span>
       </div>
     </div>
-    <div class="eta-box">
-      <span class="v" id="r-eta">—</span>
+    <div class="eta-box" id="eta-box">
+      <span class="v" id="r-eta"></span>
       <span class="l" data-i18n="rate.eta">ETA</span>
     </div>
   </div>
@@ -1134,7 +1133,6 @@ function paintLane(id,rate,remaining,events,tipKey){
   el.querySelector('.v').textContent=(rate*60).toFixed(rate*60<10?1:0);
   const rem=el.querySelector('.rem');
   rem.textContent=remaining?tf('lane.left',{n:remaining}):t('lane.empty');
-  el.classList.toggle('spent',!remaining);
   paintSpark(id.replace('lane-','spark-'),events);
 }
 function updateRates(){
@@ -1153,7 +1151,7 @@ function updateRates(){
   paintLane('lane-plain', rP,pRem,plainEvents, 'lane.plain');
 
   let mode,text;
-  if(remaining<=0){ mode='idle'; text='—'; _etaEma=0; }
+  if(remaining<=0){ mode='idle'; text=''; _etaEma=0; }
   else if(rIn>0.3){ mode='loading'; text=t('rate.loading'); }
   else {
     const worst=Math.max(laneETA(mRem,liveRate(mediaEvents,TAU_ETA)),
@@ -1168,6 +1166,8 @@ function updateRates(){
 
 let _etaState={mode:null,text:null};
 function setEtaDisplay(mode,text){
+  const box=$('eta-box');
+  if(box) box.style.visibility=(mode==='idle')?'hidden':'visible';
   if(_etaState.mode===mode&&_etaState.text===text) return;
   const eta=$('r-eta');
   if(mode!==_etaState.mode){
