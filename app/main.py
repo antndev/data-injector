@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import events
 from app.config import settings
 from app.database import init_db
+from app import jobs
 from app.watcher import start_watcher
 from app.worker import run_worker, shutdown as worker_shutdown
 from app.api.routes import router
@@ -130,6 +131,7 @@ async def lifespan(app: FastAPI):
     await _check_openwebui()
     _sweep_stale_uploads()
     await init_db()
+    await jobs.prune()
 
     loop = asyncio.get_running_loop()
     loop.set_default_executor(ThreadPoolExecutor(
@@ -141,6 +143,10 @@ async def lifespan(app: FastAPI):
 
     inbox_queue: asyncio.Queue = asyncio.Queue()
     observer = start_watcher(settings.inbox_dir, inbox_queue, loop)
+
+    resumed = await jobs.resume_all()
+    if resumed:
+        log.info("resumed %d unfinished job(s)", resumed)
 
     app.state.worker_alive = True
 

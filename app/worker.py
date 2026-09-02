@@ -284,8 +284,10 @@ async def _process_file(path: Path, file_id: str):
 
         async with connect() as db:
             await db.execute(
-                "UPDATE files SET status='done', qdrant_collection=?, qdrant_chunk_count=?, ingested_at=? WHERE id=?",
-                ("openwebui", stored, datetime.now(timezone.utc).isoformat(), file_id),
+                "UPDATE files SET status='done', qdrant_collection=?, qdrant_chunk_count=?,"
+                " openwebui_file_id=?, ingested_at=? WHERE id=?",
+                ("openwebui", stored, file_id_remote,
+                 datetime.now(timezone.utc).isoformat(), file_id),
             )
             await db.commit()
 

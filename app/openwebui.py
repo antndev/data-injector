@@ -64,9 +64,16 @@ async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> int:
 
 
 async def remove(file_id: str, timeout: float = 120.0) -> None:
+    """Detaches a file from the knowledge base and deletes it.
+
+    Detaching alone leaves the file and its vectors behind, so a deleted
+    document kept answering questions."""
     path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}/file/remove"
     async with httpx.AsyncClient(timeout=timeout) as client:
         await client.post(_url(path), headers=_headers(), json={"file_id": file_id})
+        response = await client.delete(_url(f"/api/v1/files/{file_id}"), headers=_headers())
+    if response.status_code >= 400 and response.status_code != 404:
+        raise RuntimeError(f"delete failed {response.status_code}: {response.text[:200]}")
 
 
 async def reachable(timeout: float = 15.0) -> bool:

@@ -539,6 +539,7 @@ const I18N={
   'status.queued':'Warteschlange','status.processing':'In Arbeit','status.done':'Fertig','status.failed':'Fehlgeschlagen','status.duplicate':'Duplikat','status.unsupported':'Nicht unterstützt',
   'err.none':'(keine Fehlermeldung gespeichert)','err.load':'Fehler konnte nicht geladen werden',
   'toast.deleting':'Wird gelöscht…','toast.deleted':'Gelöscht','toast.delfail':'Löschen fehlgeschlagen','toast.filedel':'Datei gelöscht',
+  'toast.retrying':'Wird erneut verarbeitet…','toast.jobbusy':'Es läuft bereits eine Operation','toast.jobcancel':'Abgebrochen',
   'up.uploading':'Lädt hoch…','up.cancelled':'Abgebrochen','indexed':'bereits indexiert','resume':'fortsetzen',
   'file.one':'Datei','file.many':'Dateien','hint.matches':'Treffer','hint.files':'Dateien',
   'm.retryTitle':'Dateien erneut verarbeiten','m.retryMsg':'{n} {files} erneut verarbeiten?',
@@ -565,6 +566,7 @@ const I18N={
   'status.queued':'Queued','status.processing':'Processing','status.done':'Done','status.failed':'Failed','status.duplicate':'Duplicate','status.unsupported':'Unsupported',
   'err.none':'(no error message saved)','err.load':'Could not load error',
   'toast.deleting':'Deleting…','toast.deleted':'Deleted','toast.delfail':'Delete failed','toast.filedel':'File deleted',
+  'toast.retrying':'Retrying…','toast.jobbusy':'An operation is already running','toast.jobcancel':'Cancelled',
   'up.uploading':'Uploading…','up.cancelled':'Cancelled','indexed':'already indexed','resume':'resume',
   'file.one':'file','file.many':'files','hint.matches':'matches','hint.files':'files',
   'm.retryTitle':'Retry files','m.retryMsg':'Retry {n} {files}?',
@@ -912,33 +914,54 @@ function makeToast(){
 
 function toastError(msg){makeToast().error(msg);}
 
-async function deleteWithProgress(ids){
-  const total=ids.length;
-  const BATCH=50;
-  let done=0;
-  const to=makeToast();to.reset();to.progress(t('toast.deleting'),0,total);
-  try{
-    for(let i=0;i<ids.length;i+=BATCH){
-      const batch=ids.slice(i,i+BATCH);
-      const res=await fetch('/files/bulk/delete?delete_physical=true',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ids:batch})
-      }).then(r=>{if(!r.ok)throw new Error('delete '+r.status);return r.json();});
-      done+=res.deleted??batch.length;
-      to.progress(t('toast.deleting'),done,total);
-    }
-    to.done(t('toast.deleted'),done);
-  }catch(e){
-    to.error(t('toast.delfail'));
-    console.error(e);
+async function followJob(id,to,labelKey){
+  for(;;){
+    await new Promise(r=>setTimeout(r,600));
+    let j;
+    try{ j=await fetch('/jobs/'+id).then(r=>r.ok?r.json():null); }catch{ continue; }
+    if(!j){ to.error(t('toast.delfail')); return 0; }
+    to.progress(t(labelKey),j.done+j.failed,j.total);
+    if(j.status==='running') continue;
+    if(j.status==='done') to.done(t('toast.deleted'),j.done);
+    else if(j.status==='cancelled') to.done(t('toast.jobcancel'),j.done);
+    else to.error(j.error||t('toast.delfail'));
+    load();
+    return j.done;
   }
-  return done;
 }
+
+async function runJob(kind,ids,labelKey){
+  if(!ids.length)return 0;
+  const to=makeToast();to.reset();to.progress(t(labelKey),0,ids.length);
+  let id;
+  try{
+    const r=await fetch('/jobs',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind,ids})});
+    if(r.status===409){ to.error(t('toast.jobbusy')); return 0; }
+    if(!r.ok) throw new Error('job '+r.status);
+    id=(await r.json()).id;
+  }catch(e){ to.error(t('toast.delfail')); console.error(e); return 0; }
+  return followJob(id,to,labelKey);
+}
+
+async function deleteWithProgress(ids){ return runJob('delete',ids,'toast.deleting'); }
+
+async function attachRunningJob(){
+  try{
+    const j=await fetch('/jobs/active').then(r=>r.json());
+    if(!j||!j.id)return;
+    const key=j.kind==='retry'?'toast.retrying':'toast.deleting';
+    const to=makeToast();to.reset();to.progress(t(key),j.done+j.failed,j.total);
+    followJob(j.id,to,key);
+  }catch{}
+}
+attachRunningJob();
 
 $('b-retry').onclick=async()=>{
   if(!await showModal(t('m.retryTitle'),tf('m.retryMsg',{n:selected.size,files:fileWord(selected.size)}),t('retry'),false))return;
-  await fetch('/files/bulk/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[...selected]})});
-  selected.clear();load();
+  const ids=[...selected];
+  selected.clear();
+  await runJob('retry',ids,'toast.retrying');
 };
 $('b-del').onclick=async()=>{
   const ids=[...selected];

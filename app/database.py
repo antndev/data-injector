@@ -21,10 +21,24 @@ CREATE TABLE IF NOT EXISTS files (
 );
 CREATE INDEX IF NOT EXISTS idx_status     ON files(status);
 CREATE INDEX IF NOT EXISTS idx_hash       ON files(file_hash);
--- Dashboard pagination orders by created_at DESC; without this every page
--- query did a full-table scan + temp sort.
 CREATE INDEX IF NOT EXISTS idx_created_at ON files(created_at);
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'running',
+    total       INTEGER NOT NULL DEFAULT 0,
+    done        INTEGER NOT NULL DEFAULT 0,
+    failed      INTEGER NOT NULL DEFAULT 0,
+    pending     TEXT NOT NULL DEFAULT '[]',
+    error       TEXT,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 """
+
+_COLUMNS = [("files", "openwebui_file_id", "TEXT")]
 
 
 _BUSY_TIMEOUT_MS = 5000
@@ -35,6 +49,10 @@ async def init_db() -> None:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA synchronous=NORMAL")
         await db.executescript(_CREATE)
+        for table, column, decl in _COLUMNS:
+            cur = await db.execute(f"PRAGMA table_info({table})")
+            if column not in [r[1] for r in await cur.fetchall()]:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         await db.commit()
 
 

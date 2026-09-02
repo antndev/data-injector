@@ -22,11 +22,13 @@ from app import events
 from app.config import settings
 from app.database import connect
 from app import openwebui
+from app import jobs
 from app.worker import trigger_scan
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 audit = logging.getLogger("audit")
+logger = logging.getLogger(__name__)
 
 StatusFilter = Literal[
     "queued", "processing", "done", "failed", "duplicate", "unsupported",
@@ -296,12 +298,13 @@ async def delete_file(file_id: str, delete_physical: bool = False):
         raise HTTPException(404, "File not found")
     row = dict(row)
 
-    remote = row["qdrant_collection"] if "qdrant_collection" in row.keys() else None
+    remote = row.get("openwebui_file_id")
     if remote:
         try:
-            await openwebui.remove(row["id"])
-        except Exception:
-            pass
+            await openwebui.remove(remote)
+        except Exception as exc:
+            logger.error("could not remove %s from OpenWebUI: %s", row["filename"], exc)
+            raise HTTPException(502, f"OpenWebUI delete failed: {exc}")
 
     async with connect() as db:
         await db.execute("DELETE FROM files WHERE id=?", (file_id,))
@@ -374,6 +377,55 @@ async def retry_file(file_id: str):
 
 class BulkBody(BaseModel):
     ids: list[str]
+
+
+class JobStart(BaseModel):
+    kind: Literal["delete", "retry"]
+    ids: list = []
+
+
+async def _job_delete(file_id: str) -> bool:
+    await delete_file(file_id, True)
+    return True
+
+
+async def _job_retry(file_id: str) -> bool:
+    await retry_file(file_id)
+    return True
+
+
+jobs.register("delete", _job_delete)
+jobs.register("retry", _job_retry)
+
+
+@router.post("/jobs")
+async def start_job(body: JobStart):
+    if not body.ids:
+        raise HTTPException(400, "no ids")
+    running = await jobs.active()
+    if running:
+        raise HTTPException(409, "a job is already running")
+    job_id = await jobs.create(body.kind, body.ids)
+    audit.info("job %s started: %s over %d files", job_id[:8], body.kind, len(body.ids))
+    return {"id": job_id}
+
+
+@router.get("/jobs/active")
+async def active_job():
+    return await jobs.active() or {}
+
+
+@router.get("/jobs/{job_id}")
+async def job_status(job_id: str):
+    job = await jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    return job
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    return {"ok": await jobs.cancel(job_id)}
 
 
 @router.post("/files/bulk/delete")
