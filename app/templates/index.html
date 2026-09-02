@@ -711,7 +711,10 @@ function makeRow(f){
   return tr;
 }
 
+const inEvents=[],outEvents=[];
+let _rPrev=null,_rPrevAt=0;
 function updateCounts(s){
+  feedRates(s);
   $('c-total').textContent=s.total;
   $('c-queued').textContent=s.queued;
   $('c-processing').textContent=s.processing;
@@ -1025,20 +1028,23 @@ const TAU_ETA=15;
 const SPARK_BUCKETS=20;
 const SPARK_WINDOW_MS=5_000;
 const PRUNE_HORIZON_MS=Math.max(SPARK_WINDOW_MS,TAU_ETA*8*1000);
-const REPLAY_CUTOFF_MS=10_000;
 
-const inEvents=[],outEvents=[];
 
 function buildSpark(id){const el=$(id);for(let i=0;i<SPARK_BUCKETS;i++){const b=document.createElement('span');b.style.height='2px';el.appendChild(b)}}
 buildSpark('spark-in');buildSpark('spark-out');
 
-function trackEvent(msg,t){
-
-  const evtTs=t?new Date(t).getTime():Date.now();
-  if(Date.now()-evtTs>REPLAY_CUTOFF_MS) return;
-
-  if(/^Queued:/.test(msg))inEvents.push(evtTs);
-  else if(/^Done:/.test(msg)||/^Failed:/.test(msg))outEvents.push(evtTs);
+function feedRates(s){
+  const now=Date.now();
+  const out=(s.done||0)+(s.failed||0)+(s.duplicates||0)+(s.unsupported||0);
+  const inn=s.total||0;
+  if(_rPrev){
+    const span=Math.max(1,now-_rPrevAt);
+    const spread=(arr,n)=>{n=Math.min(Math.max(0,n),1000);
+      for(let i=1;i<=n;i++)arr.push(_rPrevAt+Math.round(span*i/n));};
+    spread(outEvents,out-_rPrev.out);
+    spread(inEvents,inn-_rPrev.inn);
+  }
+  _rPrev={out,inn};_rPrevAt=now;
 }
 function prune(a){const c=Date.now()-PRUNE_HORIZON_MS;while(a.length&&a[0]<c)a.shift();}
 function liveRate(arr,tau){
@@ -1139,7 +1145,6 @@ function scheduleReload(){
   }
 }
 function appendLog(evt){
-  trackEvent(evt.msg||'',evt.t);
   if(/^(Queued|Done|Failed|Duplicate|Unsupported|Processing):/.test(evt.msg||'')){
     scheduleReload();
   }
