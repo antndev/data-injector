@@ -8,6 +8,8 @@ HOST = "http://localhost:11434"
 
 PROMPT = "Extract all text from this image."
 
+MAX_TOKENS = 768
+
 PROMPT_STRUCTURE = (
     "Describe the structure of this diagram: type, hierarchy, arrow directions, "
     "and which elements connect to which."
@@ -36,7 +38,7 @@ def describe(
         "prompt": prompt,
         "images": [base64.b64encode(png).decode()],
         "stream": False,
-        "options": {"temperature": 0},
+        "options": {"temperature": 0, "num_predict": MAX_TOKENS},
     }
     t0 = time.time()
     req = urllib.request.Request(
