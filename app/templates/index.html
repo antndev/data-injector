@@ -138,10 +138,10 @@ aside{width:260px;flex-shrink:0;border-right:1px solid var(--line);display:flex;
 main{flex:1;display:flex;flex-direction:column;min-width:0}
 header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:1px solid var(--line)}
 
-.rates{display:flex;align-items:center;gap:36px;padding:12px 24px;
+.rates{display:flex;align-items:center;gap:26px;padding:12px 24px;
   border-bottom:1px solid var(--line);background:#161616;overflow-x:auto}
 .big-stat{display:flex;flex-direction:column;align-items:flex-start;gap:2px;
-  line-height:1;flex-shrink:0;min-width:96px}
+  line-height:1;flex-shrink:0}
 .big-stat .v{font-size:28px;font-weight:600;color:var(--text);
   font-variant-numeric:tabular-nums;white-space:nowrap}
 .big-stat .u{font-size:12px;font-weight:500;color:var(--dim);margin-left:3px}
@@ -149,8 +149,8 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 .big-stat.eta .v{color:var(--purple)}
 .big-stat.eta .v.loading{font-size:16px;font-weight:500;color:var(--mute)}
 .rate-rows{display:flex;flex-direction:column;gap:6px}
-.rate{display:grid;grid-template-columns:8px 74px 40px 22px 66px 72px;
-  align-items:center;column-gap:8px}
+.rate{display:grid;grid-template-columns:8px 68px 38px 20px 62px 66px;
+  align-items:center;column-gap:7px}
 .rate .mark{display:flex;align-items:center;justify-content:flex-start}
 .rate .l{color:var(--mute);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rate .v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;color:var(--text);
@@ -185,7 +185,7 @@ header{display:flex;align-items:center;gap:10px;padding:14px 24px;border-bottom:
 #eta-box .info:hover::after,#eta-box .info:hover::before,#eta-box .info:focus-visible::after,#eta-box .info:focus-visible::before{opacity:1;visibility:visible}
 .rate.tput{color:var(--dim);font-size:12px}
 .rate.tput b{color:var(--mute);font-weight:500}
-.spark{display:flex;align-items:flex-end;gap:1px;height:14px;width:72px;overflow:hidden}
+.spark{display:flex;align-items:flex-end;gap:1px;height:14px;width:66px;overflow:hidden}
 .spark span{width:3px;background:var(--line);border-radius:1px;transition:height .3s}
 .rate.in .spark span.hot{background:var(--blue)}
 .rate.out .spark span.hot{background:var(--green)}
@@ -1095,7 +1095,8 @@ function paintSpark(id,arr){
     if(dt<SPARK_WINDOW_MS) counts[Math.min(SPARK_BUCKETS-1,Math.floor((SPARK_WINDOW_MS-dt)/bs))]++;
   }
   const max=Math.max(2,...counts);
-  el.querySelectorAll('span').forEach((s,i)=>{s.style.height=Math.max(2,Math.round((counts[i]/max)*16))+'px';s.classList.toggle('hot',counts[i]>0);});
+  el.style.visibility=counts.some(c=>c>0)?'visible':'hidden';
+  el.querySelectorAll('span').forEach((s,i)=>{s.style.height=Math.max(2,Math.round((counts[i]/max)*14))+'px';s.classList.toggle('hot',counts[i]>0);});
 }
 function fmtETA(sec){
   if(!isFinite(sec)||sec<=0)return '—';
@@ -1157,7 +1158,7 @@ function updateRates(){
 let _etaState={mode:null,text:null};
 function setEtaDisplay(mode,text){
   const box=$('eta-box');
-  if(box) box.style.visibility=(mode==='idle')?'hidden':'visible';
+  if(box) box.style.display=(mode==='idle')?'none':'flex';
   if(_etaState.mode===mode&&_etaState.text===text) return;
   const eta=$('r-eta');
   if(mode!==_etaState.mode){
