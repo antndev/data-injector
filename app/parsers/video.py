@@ -8,7 +8,7 @@ from pathlib import Path
 
 FPS = 1
 THUMB = 24
-CHANGE_THRESHOLD = 8.0
+CHANGE_THRESHOLD = 1.5
 MAX_KEPT = 12
 
 

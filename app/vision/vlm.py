@@ -8,7 +8,15 @@ HOST = "http://localhost:11434"
 
 PROMPT = "Extract all text from this image."
 
-MAX_TOKENS = 768
+MAX_TOKENS = 320
+"""Cap on generated tokens per image.
+
+Measured on 76 real slides: the model ran into the old cap of 768 on every
+single call, 30 seconds of generation, while the text left after clean() had a
+median of 56 tokens and stayed under 218 for nine slides out of ten. It was
+spending the time on repetitions that clean() then threw away. 320 keeps the
+headroom above that ninetieth percentile and cuts the wait per image by well
+over half."""
 
 PROMPT_STRUCTURE = (
     "Describe the structure of this diagram: type, hierarchy, arrow directions, "
