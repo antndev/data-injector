@@ -22,6 +22,17 @@ IMAGE_SUFFIXES = {
 
 logger = logging.getLogger(__name__)
 
+def describe_error(exc: BaseException) -> str:
+    """Names the exception class when the message is empty.
+
+    Nine files were lost to httpx.ReadTimeout, whose str() is the empty string.
+    The database recorded a failure with no reason and the .error sidecar was
+    zero bytes, so the run looked like nine unexplained losses instead of one
+    timeout worth retrying."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
 MEDIA_SUFFIXES = {
     ".ppt", ".pptx", ".pptm", ".ppsx", ".pps", ".pot", ".potx", ".pdf",
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp",
@@ -331,7 +342,8 @@ async def _process_file(path: Path, file_id: str):
                 except OSError:
                     pass
         else:
-            logger.exception("Failed: %s — %s", original_path.name, exc)
+            reason = describe_error(exc)
+            logger.exception("Failed: %s — %s", original_path.name, reason)
             try:
                 if locals().get("file_id_remote"):
                     await openwebui.remove(file_id_remote)
@@ -340,17 +352,17 @@ async def _process_file(path: Path, file_id: str):
             failed = None
             if proc_path is not None and proc_path.exists():
                 failed = _move(proc_path, settings.failed_dir)
-                (settings.failed_dir / (failed.name + ".error")).write_text(str(exc), encoding="utf-8")
+                (settings.failed_dir / (failed.name + ".error")).write_text(reason, encoding="utf-8")
             async with connect() as db:
                 if failed is not None:
                     await db.execute(
                         "UPDATE files SET status='failed', filename=?, error_message=? WHERE id=?",
-                        (failed.name, str(exc)[:4000], file_id),
+                        (failed.name, reason[:4000], file_id),
                     )
                 else:
                     await db.execute(
                         "UPDATE files SET status='failed', error_message=? WHERE id=?",
-                        (str(exc)[:4000], file_id),
+                        (reason[:4000], file_id),
                     )
                 await db.commit()
     finally:

@@ -36,31 +36,71 @@ def _url(path: str) -> str:
     return settings.openwebui_url.rstrip("/") + path
 
 
-async def upload(text: str, filename: str, timeout: float = 120.0) -> str:
-    """Sends one markdown document and returns its file id."""
+ATTEMPTS = 5
+BACKOFF = (5, 15, 30, 60)
+
+
+async def upload(text: str, filename: str, timeout: float = 300.0) -> str:
+    """Sends one markdown document and returns its file id.
+
+    OpenWebUI embeds the document inside this request, so under load it can sit
+    well past a minute before answering. A full run lost nine documents to a
+    read timeout on this call, after the extraction work was already done, so a
+    transient slow answer must not cost the file.
+
+    The waits stretch to almost two minutes in total on purpose. Three tries
+    over three seconds looked like enough until OpenWebUI was restarted mid
+    run: it needs about thirty seconds to come back, and every file in flight
+    was lost with ConnectError while the retries had long given up."""
     files = {"file": (filename, text.encode("utf-8"), "text/markdown")}
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(_url("/api/v1/files/"), headers=_headers(), files=files)
-    if response.status_code >= 400:
-        raise RuntimeError(f"upload failed {response.status_code}: {response.text[:200]}")
-    file_id = response.json().get("id")
-    if not file_id:
-        raise RuntimeError(f"upload returned no id: {response.text[:200]}")
-    return file_id
+    last = None
+    for attempt in range(ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    _url("/api/v1/files/"), headers=_headers(), files=files
+                )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            last = exc
+            if attempt + 1 < ATTEMPTS:
+                await asyncio.sleep(BACKOFF[attempt])
+                continue
+            raise RuntimeError(f"upload gave up after {ATTEMPTS} tries: {type(exc).__name__}")
+        if response.status_code >= 400:
+            raise RuntimeError(f"upload failed {response.status_code}: {response.text[:200]}")
+        file_id = response.json().get("id")
+        if not file_id:
+            raise RuntimeError(f"upload returned no id: {response.text[:200]}")
+        return file_id
+    raise RuntimeError(f"upload gave up: {last}")
 
 
 async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> int:
-    """Attaches uploaded files to the knowledge base and triggers indexing."""
+    """Attaches uploaded files to the knowledge base and triggers indexing.
+
+    This is the step that makes an uploaded document findable. A file that is
+    uploaded but never attached sits in OpenWebUI as dead weight: it consumes
+    storage, it shows up in no knowledge base, and the injector has already
+    written it off as done."""
     ids = [i for i in file_ids if i]
     if not ids:
         return 0
     body = [{"file_id": i} for i in ids]
     path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}/files/batch/add"
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(_url(path), headers=_headers(), json=body)
-    if response.status_code >= 400:
-        raise RuntimeError(f"batch add failed {response.status_code}: {response.text[:200]}")
-    return len(ids)
+    for attempt in range(ATTEMPTS):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(_url(path), headers=_headers(), json=body)
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if attempt + 1 < ATTEMPTS:
+                await asyncio.sleep(BACKOFF[attempt])
+                continue
+            raise RuntimeError(
+                f"batch add gave up after {ATTEMPTS} tries: {type(exc).__name__}")
+        if response.status_code >= 400:
+            raise RuntimeError(f"batch add failed {response.status_code}: {response.text[:200]}")
+        return len(ids)
+    return 0
 
 
 async def remove(file_id: str, timeout: float = 120.0) -> None:
@@ -87,14 +127,21 @@ async def reachable(timeout: float = 15.0) -> bool:
 
 
 async def _flush(pending: list) -> None:
+    """Attaches the collected ids, and keeps them if that did not work.
+
+    The list used to be cleared whether the call succeeded or not. One failed
+    batch therefore lost the ids for good: seventeen documents were uploaded,
+    five were attached, and twelve became unreachable while every one of them
+    was recorded as done. Keeping the ids means the next flush tries again."""
     if not pending:
         return
     try:
         await add_batch(pending)
         logger.info("indexed %d files in OpenWebUI", len(pending))
+        pending.clear()
     except Exception as exc:
-        logger.error("batch add failed for %d files: %s", len(pending), exc)
-    pending.clear()
+        logger.error("batch add failed for %d files, they stay queued: %s",
+                     len(pending), exc)
 
 
 async def _writer_loop() -> None:
