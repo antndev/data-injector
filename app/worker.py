@@ -1,8 +1,6 @@
 import asyncio
 import hashlib
 import logging
-import math
-import re
 import shutil
 import tempfile
 import uuid
@@ -39,14 +37,6 @@ MEDIA_SUFFIXES = {
     ".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm",
     ".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".opus", ".aiff",
 }
-
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_MIN_CHUNK_CHARS = 3
-
-
-def _clean_chunk(s: str) -> str:
-    return _CONTROL_CHARS.sub("", s).strip()
-
 
 active_paths: set[str] = set()
 
@@ -420,7 +410,7 @@ def _apply_models(doc, path: Path) -> None:
     The gate is what keeps this affordable: over the reference corpus only
     14.5 percent of slides qualify, so this runs on 2590 of 17833 instead of
     every image."""
-    from app.parsers import asr, video
+    from app.parsers import asr
     from app.parsers.base import Part
     from app.vision import gate
 
@@ -462,7 +452,7 @@ def _extract_member(source: Path, member: str) -> Path:
 
 def _describe_image(doc, block, path: Path) -> str:
     from app.parsers import video
-    from app.vision import ocr, render, vlm
+    from app.vision import render
 
     if block.kind in ("video_image", "embedded_media"):
         media, temporary = _media_for(block, path)

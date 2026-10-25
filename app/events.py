@@ -35,10 +35,6 @@ def _safe_put(q: asyncio.Queue, evt: dict):
         pass
 
 
-def history() -> list[dict]:
-    return list(_buffer)
-
-
 def clear_buffer():
     _buffer.clear()
 

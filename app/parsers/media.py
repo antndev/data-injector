@@ -15,7 +15,7 @@ import subprocess
 
 from pathlib import Path
 
-from .base import Block, Document, Part, EXTRACTOR_VERSION, source_info
+from .base import Block, Document, EXTRACTOR_VERSION, source_info
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
 

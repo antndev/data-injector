@@ -18,11 +18,6 @@ spending the time on repetitions that clean() then threw away. 320 keeps the
 headroom above that ninetieth percentile and cuts the wait per image by well
 over half."""
 
-PROMPT_STRUCTURE = (
-    "Describe the structure of this diagram: type, hierarchy, arrow directions, "
-    "and which elements connect to which."
-)
-
 
 def clean(text: str) -> str:
     """Strips markdown fences and collapses repeated segments.

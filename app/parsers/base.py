@@ -1,4 +1,4 @@
-"""Datenmodell und Routing. Spaeter app/parsers/base.py im Injector."""
+"""Datenmodell und Routing."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, asdict
 
 from pathlib import Path
 
-from typing import Callable, Optional
+from typing import Optional
 
 EXTRACTOR_VERSION = {
     "pptx": 1,

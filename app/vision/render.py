@@ -10,12 +10,6 @@ import hashlib, shutil, subprocess, tempfile
 
 from pathlib import Path
 
-SOFFICE = [
-    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-    "/usr/bin/soffice",
-    "/usr/bin/libreoffice",
-]
-
 from ..parsers.paths import PDF_CACHE
 
 TIMEOUT_S = 300
