@@ -9,12 +9,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl build-essential cmake git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/ggml-org/whisper.cpp /tmp/whisper \
-    && cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release \
+RUN git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp /tmp/whisper \
+    && cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
     && cmake --build /tmp/whisper/build --config Release -j"$(nproc)" --target whisper-cli \
     && cp /tmp/whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli \
     && rm -rf /tmp/whisper \
-    && apt-get purge -y build-essential cmake git && apt-get autoremove -y
+    && apt-get purge -y build-essential cmake git && apt-get autoremove -y \
+    && whisper-cli --help > /dev/null
 
 WORKDIR /app
 

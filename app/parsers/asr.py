@@ -65,6 +65,10 @@ def transcribe(source: Path, language: str = "de", timeout: int = 900) -> dict:
             timeout=timeout,
             check=False,
         )
+        if p.returncode != 0:
+            raise RuntimeError(
+                "whisper-cli failed: " + p.stderr.decode("utf-8", "replace").strip()[-200:]
+            )
         txt = Path(str(wav) + ".txt")
         if txt.exists():
             text = txt.read_text(encoding="utf-8", errors="replace").strip()
