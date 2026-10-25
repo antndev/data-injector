@@ -9,6 +9,14 @@ from pathlib import Path
 FPS = 1
 THUMB = 24
 CHANGE_THRESHOLD = 1.5
+"""Mean absolute difference on the 24 by 24 thumbnail that counts as a change.
+
+8.0 was set with camera footage in mind and silently threw away every slide in
+a screen recording. Measured on a four slide training video, the real slide
+changes scored 6.82, 3.08 and 2.14 while identical frames stayed under 0.5, so
+only the opening frame survived and three quarters of the deck never reached
+the model. 1.5 sits in that gap. Keeping more frames costs nothing beyond
+MAX_KEPT, which caps the work either way."""
 MAX_KEPT = 12
 
 
