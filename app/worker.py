@@ -65,15 +65,25 @@ async def shutdown() -> None:
 
 
 async def recover_crashed():
+    """Puts files back on track that a restart interrupted.
+
+    A file that already reached OpenWebUI only waits to be attached, so it goes
+    back to the writer. Extracting it again would find its source deleted.
+    Anything earlier starts over from the queue."""
     async with connect() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT id, filename FROM files WHERE status = 'processing'") as cur:
+        async with db.execute(
+            "SELECT id, filename, openwebui_file_id FROM files WHERE status = 'processing'"
+        ) as cur:
             rows = await cur.fetchall()
     if not rows:
         return
 
     logger.warning("Recovering %d crashed file(s)", len(rows))
     for row in rows:
+        if row["openwebui_file_id"]:
+            await openwebui.register(row["openwebui_file_id"])
+            continue
         async with connect() as db:
             await db.execute(
                 "UPDATE files SET status='queued', error_message=NULL WHERE id=?",
@@ -90,7 +100,8 @@ async def _register_as_queued(path: Path) -> str | None:
         async with connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT id FROM files WHERE filename=? AND status IN ('queued','processing')",
+                "SELECT id FROM files WHERE filename=? AND status IN ('queued','processing')"
+                " AND openwebui_file_id IS NULL",
                 (path.name,),
             ) as cur:
                 existing = await cur.fetchone()
@@ -117,7 +128,7 @@ async def run_worker(inbox_queue: asyncio.Queue):
     global _inbox_queue
     _inbox_queue = inbox_queue
 
-    openwebui.start_writer()
+    openwebui.start_writer(on_settled=_settle)
 
     try:
         await recover_crashed()
@@ -127,6 +138,7 @@ async def run_worker(inbox_queue: asyncio.Queue):
         await _check_openwebui()
     except Exception:
         logger.exception("OpenWebUI probe failed, continuing")
+    _spawn(reconcile())
 
     sem = asyncio.Semaphore(settings.worker_concurrency)
     media_sem = asyncio.Semaphore(settings.media_concurrency)
@@ -298,14 +310,12 @@ async def _process_file(path: Path, file_id: str):
             raise ValueError("No text extracted")
 
         file_id_remote = await _upload_markdown(proc_path.name, text)
-        stored = 1
 
         async with connect() as db:
             await db.execute(
-                "UPDATE files SET status='done', qdrant_collection=?, qdrant_chunk_count=?,"
-                " openwebui_file_id=?, ingested_at=? WHERE id=?",
-                ("openwebui", stored, file_id_remote,
-                 datetime.now(timezone.utc).isoformat(), file_id),
+                "UPDATE files SET qdrant_collection=?, qdrant_chunk_count=1,"
+                " openwebui_file_id=? WHERE id=?",
+                (settings.openwebui_knowledge_id, file_id_remote, file_id),
             )
             await db.commit()
 
@@ -316,7 +326,8 @@ async def _process_file(path: Path, file_id: str):
                 logger.warning("Could not delete %s after ingest: %s", proc_path.name, e)
         elif proc_path.exists():
             _move(proc_path, settings.done_dir)
-        logger.info("Done: %s (%d chunks)", proc_path.name, stored)
+        await openwebui.register(file_id_remote)
+        logger.info("Uploaded: %s, waiting to be attached", proc_path.name)
 
     except Exception as exc:
         async with connect() as db:
@@ -385,6 +396,90 @@ async def _set_status(file_id: str, status: str):
     async with connect() as db:
         await db.execute("UPDATE files SET status=? WHERE id=?", (status, file_id))
         await db.commit()
+
+
+async def _settle(attached: list, failed: list) -> None:
+    """Records what the writer got into the knowledge base and what it gave up on.
+
+    Only here does a file become done. Done used to be written right after the
+    upload, so a restart between upload and attach left files that counted as
+    done and sat in no knowledge base."""
+    now = datetime.now(timezone.utc).isoformat()
+    async with connect() as db:
+        db.row_factory = aiosqlite.Row
+        for remote, reason in [(i, None) for i in attached] + list(failed):
+            async with db.execute(
+                "SELECT filename FROM files WHERE openwebui_file_id=? AND status='processing'",
+                (remote,),
+            ) as cur:
+                row = await cur.fetchone()
+            if reason is None:
+                await db.execute(
+                    "UPDATE files SET status='done', ingested_at=?"
+                    " WHERE openwebui_file_id=? AND status='processing'",
+                    (now, remote),
+                )
+                if row:
+                    logger.info("Done: %s (1 chunks)", row["filename"])
+            else:
+                await db.execute(
+                    "UPDATE files SET status='failed', error_message=?"
+                    " WHERE openwebui_file_id=? AND status='processing'",
+                    (reason[:4000], remote),
+                )
+                logger.error("Failed: %s — %s", row["filename"] if row else remote, reason)
+        await db.commit()
+        async with db.execute(
+            "SELECT 1 FROM files WHERE status IN ('queued','processing') LIMIT 1"
+        ) as cur:
+            busy = await cur.fetchone() is not None
+    if not busy:
+        await reconcile()
+
+
+reconciled: dict = {}
+
+
+async def reconcile() -> dict:
+    """Checks the knowledge base against what the injector calls done.
+
+    The counter is no proof. Twice a run reported every file done while files
+    sat in no knowledge base. At the end of every run the done files are
+    compared with what the knowledge base lists, and every missing one goes to
+    the writer again. Attaching skips files already there, so nothing lands
+    twice. Only files sent to the current knowledge base count, which keeps a
+    switch of OPENWEBUI_KNOWLEDGE_ID from copying old files across."""
+    try:
+        held = await openwebui.knowledge_file_ids()
+    except Exception as exc:
+        logger.warning("Reconcile skipped, knowledge base not readable: %s", describe_error(exc))
+        return {}
+    async with connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT openwebui_file_id FROM files WHERE status='done' AND qdrant_collection=?",
+            (settings.openwebui_knowledge_id,),
+        ) as cur:
+            done = {r["openwebui_file_id"] for r in await cur.fetchall()}
+        missing = sorted(done - held)
+        for remote in missing:
+            await db.execute(
+                "UPDATE files SET status='processing' WHERE openwebui_file_id=?", (remote,)
+            )
+        await db.commit()
+    for remote in missing:
+        await openwebui.register(remote)
+    reconciled.update(
+        checked_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        done=len(done),
+        in_knowledge_base=len(held),
+        sent_again=len(missing),
+        not_from_injector=len(held - done),
+    )
+    log = logger.warning if missing else logger.info
+    log("Reconciled: %d done, %d in the knowledge base, %d sent again",
+        len(done), len(held), len(missing))
+    return dict(reconciled)
 
 
 def _extract_markdown(path: Path) -> str:
@@ -489,11 +584,9 @@ def _read_image(data: bytes) -> str:
 
 
 async def _upload_markdown(filename: str, markdown: str) -> str:
-    """Sends the extracted text and queues it for indexing."""
-    name = filename[:120] + ".md"
-    file_id = await openwebui.upload(markdown, name)
-    await openwebui.register(file_id)
-    return file_id
+    """Sends the extracted text. The caller queues it for attaching only after
+    the id is recorded, so a restart in between can still attach it."""
+    return await openwebui.upload(markdown, filename[:120] + ".md")
 
 
 async def _check_openwebui() -> None:

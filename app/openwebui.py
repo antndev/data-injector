@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 _queue: asyncio.Queue | None = None
 _task: asyncio.Task | None = None
+_on_settled = None
+_misses: dict[str, int] = {}
+
+
+class Rejected(RuntimeError):
+    """OpenWebUI refused the request itself, so sending it again unchanged cannot help."""
 
 
 def _headers() -> dict:
@@ -75,16 +81,19 @@ async def upload(text: str, filename: str, timeout: float = 300.0) -> str:
     raise RuntimeError(f"upload gave up: {last}")
 
 
-async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> int:
-    """Attaches uploaded files to the knowledge base and triggers indexing.
+async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> set:
+    """Attaches uploaded files to the knowledge base and returns the ids that made it.
 
     This is the step that makes an uploaded document findable. A file that is
     uploaded but never attached sits in OpenWebUI as dead weight: it consumes
-    storage, it shows up in no knowledge base, and the injector has already
-    written it off as done."""
+    storage and it shows up in no knowledge base.
+
+    A 200 does not mean every file was attached. OpenWebUI leaves out each file
+    whose embedding failed and mentions it only under warnings, so the ids that
+    count are the ones the knowledge base lists in the answer."""
     ids = [i for i in file_ids if i]
     if not ids:
-        return 0
+        return set()
     body = [{"file_id": i} for i in ids]
     path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}/files/batch/add"
     for attempt in range(ATTEMPTS):
@@ -97,10 +106,32 @@ async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> int:
                 continue
             raise RuntimeError(
                 f"batch add gave up after {ATTEMPTS} tries: {type(exc).__name__}")
+        if response.status_code == 400:
+            raise Rejected(f"batch add rejected: {response.text[:200]}")
         if response.status_code >= 400:
             raise RuntimeError(f"batch add failed {response.status_code}: {response.text[:200]}")
-        return len(ids)
-    return 0
+        listed = {f.get("id") for f in response.json().get("files") or []}
+        return {i for i in ids if i in listed}
+    return set()
+
+
+async def knowledge_file_ids(timeout: float = 120.0) -> set:
+    """Every file id the knowledge base holds, read page by page."""
+    path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}/files"
+    ids: set = set()
+    page = 1
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        while True:
+            response = await client.get(
+                _url(path), headers=_headers(), params={"page": page, "limit": 500}
+            )
+            response.raise_for_status()
+            data = response.json()
+            items = data.get("items") or []
+            ids |= {item["id"] for item in items}
+            if not items or len(ids) >= data.get("total", 0):
+                return ids
+            page += 1
 
 
 async def remove(file_id: str, timeout: float = 120.0) -> None:
@@ -127,21 +158,60 @@ async def reachable(timeout: float = 15.0) -> bool:
 
 
 async def _flush(pending: list) -> None:
-    """Attaches the collected ids, and keeps them if that did not work.
+    """Attaches the collected ids, keeps the ones that did not make it, and
+    settles the rest.
 
     The list used to be cleared whether the call succeeded or not. One failed
     batch therefore lost the ids for good: seventeen documents were uploaded,
     five were attached, and twelve became unreachable while every one of them
-    was recorded as done. Keeping the ids means the next flush tries again."""
+    was recorded as done. Keeping the ids means the next flush tries again.
+
+    Keeping them has a trap of its own. OpenWebUI refuses the whole batch with
+    a 400 as soon as one id is unknown to it, so that id would take every later
+    batch down with it. A refused batch is tried one id at a time, and only the
+    refused id is given up. A file left out because its embedding failed gets
+    ATTEMPTS flushes before it is given up as well."""
     if not pending:
         return
     try:
-        await add_batch(pending)
-        logger.info("indexed %d files in OpenWebUI", len(pending))
-        pending.clear()
+        attached = await add_batch(pending)
+    except Rejected as exc:
+        if len(pending) == 1:
+            await _settle([], [(pending.pop(), str(exc))])
+            return
+        for file_id in list(pending):
+            one = [file_id]
+            await _flush(one)
+            if not one:
+                pending.remove(file_id)
+        return
     except Exception as exc:
         logger.error("batch add failed for %d files, they stay queued: %s",
                      len(pending), exc)
+        return
+    given_up = []
+    for file_id in pending:
+        if file_id in attached:
+            continue
+        _misses[file_id] = _misses.get(file_id, 0) + 1
+        if _misses[file_id] >= ATTEMPTS:
+            given_up.append((file_id, f"not attached by OpenWebUI after {ATTEMPTS} tries"))
+    settled = attached | {file_id for file_id, _ in given_up}
+    pending[:] = [i for i in pending if i not in settled]
+    for file_id in settled:
+        _misses.pop(file_id, None)
+    if attached:
+        logger.info("indexed %d files in OpenWebUI", len(attached))
+    await _settle(sorted(attached), given_up)
+
+
+async def _settle(attached: list, failed: list) -> None:
+    if not _on_settled or not (attached or failed):
+        return
+    try:
+        await _on_settled(attached, failed)
+    except Exception:
+        logger.exception("recording attached files failed, a restart attaches them again")
 
 
 async def _writer_loop() -> None:
@@ -168,8 +238,10 @@ async def _writer_loop() -> None:
             await _flush(pending)
 
 
-def start_writer() -> None:
-    global _queue, _task
+def start_writer(on_settled=None) -> None:
+    """Starts the writer. on_settled(attached, failed) learns which files made it."""
+    global _queue, _task, _on_settled
+    _on_settled = on_settled
     if _task and not _task.done():
         return
     _queue = asyncio.Queue()

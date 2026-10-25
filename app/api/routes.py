@@ -219,7 +219,7 @@ async def status():
     blended rate over both produces an estimate that swings with whatever
     happens to be in the queue, so the lanes are reported apart and the
     dashboard estimates each on its own."""
-    from app.worker import MEDIA_SUFFIXES
+    from app.worker import MEDIA_SUFFIXES, reconciled
 
     tests = " OR ".join(f"lower(filename) LIKE '%{e}'" for e in sorted(MEDIA_SUFFIXES))
     sql = (
@@ -255,6 +255,7 @@ async def status():
         "unsupported": counts.get("unsupported", 0),
         "total":       sum(counts.values()),
         "lanes": {"media": lane("media"), "plain": lane("plain")},
+        "reconciled": reconciled,
     }
 
 
