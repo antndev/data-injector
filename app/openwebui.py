@@ -148,9 +148,12 @@ async def remove(file_id: str, timeout: float = 120.0) -> None:
 
 
 async def reachable(timeout: float = 15.0) -> bool:
+    """Reads the target knowledge base. OpenWebUI 0.12 answers /api/v1/auths/
+    with 403 for API keys, so that check reported a healthy instance as down."""
+    path = f"/api/v1/knowledge/{settings.openwebui_knowledge_id}"
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(_url("/api/v1/auths/"), headers=_headers())
+            response = await client.get(_url(path), headers=_headers())
         return response.status_code == 200
     except Exception as exc:
         logger.warning("OpenWebUI not reachable: %s", exc)
