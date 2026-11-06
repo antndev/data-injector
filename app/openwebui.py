@@ -90,7 +90,13 @@ async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> set:
 
     A 200 does not mean every file was attached. OpenWebUI leaves out each file
     whose embedding failed and mentions it only under warnings, so the ids that
-    count are the ones the knowledge base lists in the answer."""
+    count are the ones the knowledge base lists in the answer.
+
+    Up to 0.12.4 the answer listed every file of the knowledge base. Since 0.12.5
+    it lists only the files this call added, and an empty list when all of them
+    were linked already, for instance after a retry whose first answer was lost.
+    An id missing from the answer is therefore looked up in the knowledge base
+    before it counts as left out."""
     ids = [i for i in file_ids if i]
     if not ids:
         return set()
@@ -111,6 +117,8 @@ async def add_batch(file_ids: Iterable[str], timeout: float = 900.0) -> set:
         if response.status_code >= 400:
             raise RuntimeError(f"batch add failed {response.status_code}: {response.text[:200]}")
         listed = {f.get("id") for f in response.json().get("files") or []}
+        if any(i not in listed for i in ids):
+            listed |= await knowledge_file_ids()
         return {i for i in ids if i in listed}
     return set()
 

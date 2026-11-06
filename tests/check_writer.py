@@ -32,7 +32,52 @@ def fake(refuse=(), leave_out=(), down=False):
     return add_batch
 
 
+class Answer:
+    status_code = 200
+
+    def __init__(self, files):
+        self.files = files
+
+    def json(self):
+        return {"id": "kb", "files": [{"id": i} for i in self.files]}
+
+
+class Client:
+    answer = None
+
+    def __init__(self, **_):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        return False
+
+    async def post(self, *_, **__):
+        return Client.answer
+
+
+async def check_trimmed_answer():
+    """OpenWebUI 0.12.5 and later answer only with the files a call added."""
+    real_client, real_ids = openwebui.httpx.AsyncClient, openwebui.knowledge_file_ids
+
+    async def in_knowledge_base():
+        return {"linked-before", "new"}
+
+    openwebui.httpx.AsyncClient, openwebui.knowledge_file_ids = Client, in_knowledge_base
+    try:
+        Client.answer = Answer(["new"])
+        got = await openwebui.add_batch(["new", "linked-before", "embedding-failed"])
+        assert got == {"new", "linked-before"}, got
+        Client.answer = Answer([])
+        assert await openwebui.add_batch(["linked-before"]) == {"linked-before"}
+    finally:
+        openwebui.httpx.AsyncClient, openwebui.knowledge_file_ids = real_client, real_ids
+
+
 async def main():
+    await check_trimmed_answer()
     openwebui._on_settled = record
 
     openwebui.add_batch = fake(refuse={"gone"})
@@ -58,8 +103,8 @@ async def main():
     await openwebui._flush(pending)
     assert pending == ["d"] and settled == [], (pending, settled)
 
-    print("writer: refused id isolated, left-out file given up after", openwebui.ATTEMPTS,
-          "tries, outage keeps the ids")
+    print("writer: trimmed answer looked up, refused id isolated, left-out file given up after",
+          openwebui.ATTEMPTS, "tries, outage keeps the ids")
 
 
 asyncio.run(main())
